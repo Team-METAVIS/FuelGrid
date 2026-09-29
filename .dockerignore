@@ -1,0 +1,16 @@
+# Keep the build context to what the image needs. Without this, a developer machine's node_modules and .venv
+# (built for Windows/macOS) overwrite the Linux ones inside the image, and .env would be sent to the builder.
+.git
+.github
+.env
+.env.*
+!.env.example
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+frontend/dist
+loadtest
+*.log
