@@ -76,4 +76,5 @@ class Plan:
     anomalies: list = field(default_factory=list)  # (station, fuel, z, level)
     forecast_model: str = ""
     forecasts: dict = field(default_factory=dict, repr=False)  # reused by the forecast endpoint
+    bottlenecks: list = field(default_factory=list)  # which limits are binding right now
     comparison: dict = field(default_factory=dict)  # expected unmet liters: no action vs active policy vs shadow policy

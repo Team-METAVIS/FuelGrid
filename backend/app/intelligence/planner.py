@@ -3,6 +3,7 @@ import time
 
 from app.core import metrics as m
 from app.core.logging import get_logger
+from app.intelligence.bottlenecks import analyse
 from app.intelligence.forecast import FORECASTERS
 from app.intelligence.policies import optimizer, rules
 from app.intelligence.policies.common import compute_needs, usable_routes
@@ -36,7 +37,7 @@ def forecast_all(store: StateStore, snap: Snapshot, cfg, forecaster: str | None 
                     if (s, f) not in out:
                         out[(s, f)] = FORECASTERS["moving_avg"](store, snap, s, f, cfg.horizon_ticks)
                         cold += 1
-            return out, (f"{cold} series on cold-start fallback" if cold and not got else None)
+            return out, None  # cold-start series on a moving average are normal warm-up, not a fault
     for attempt in (name, "moving_avg"):
         try:
             fn = FORECASTERS[attempt]
@@ -114,6 +115,10 @@ def plan(store: StateStore, snap: Snapshot, cfg, policy: str | None = None, fore
         fallback_used, policy = True, "rules"
 
     comparison = _compare(snap, cfg, forecasts, needs, policy, lines)
+    try:
+        bottlenecks = analyse(snap, cfg, needs, lines)
+    except Exception:  # analytics must never affect a decision
+        bottlenecks = []
     recs = _build_recs(snap, cfg, policy, forecasts, risks, lines)
     if recs:
         m.RECS.labels("proposed").inc(len(recs))
@@ -122,7 +127,7 @@ def plan(store: StateStore, snap: Snapshot, cfg, policy: str | None = None, fore
                 pred1={k: f.per_tick[0] for k, f in forecasts.items()},
                 raw1={k: (f.raw1, f.hi1) for k, f in forecasts.items() if f.raw1 is not None},
                 anomalies=[(f.station_id, f.fuel, f.z, f.level) for f in forecasts.values() if f.anomaly],
-                forecast_model=next(iter(forecasts.values())).model, comparison=comparison, forecasts=forecasts)
+                forecast_model=next(iter(forecasts.values())).model, comparison=comparison, forecasts=forecasts, bottlenecks=bottlenecks)
 
 
 def _build_recs(snap, cfg, policy, forecasts: dict[tuple[str, str], Forecast], risks, lines) -> list[Recommendation]:

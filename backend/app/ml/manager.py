@@ -74,6 +74,7 @@ class ModelManager:
                 rows = await repo.fetch("select version, status, source, meta, metrics, created_at from fg_models order by created_at desc limit 30")
                 self.registry = [{**r, "created_at": str(r["created_at"])} for r in rows]
                 champ = next((r for r in rows if r["status"] == "champion"), None)
+                self._register_bundled(rows, has_champion=champ is not None)  # the validated base model is always in the registry
                 if champ:
                     blob = await repo.fetch("select artifact from fg_models where version=:v", {"v": champ["version"]})
                     self._set_champion(DemandModel.loads(bytes(blob[0]["artifact"])), champ["version"])
@@ -88,6 +89,21 @@ class ModelManager:
                 self.registry.insert(0, {"version": self.version, "status": "champion", "source": "bundled", "meta": self.champion.meta, "metrics": meta.get("metrics", {}), "created_at": self.champion.meta.get("trained_at", "")})
             return self.version
         return None
+
+    def _register_bundled(self, rows: list, has_champion: bool) -> None:
+        """Make sure the validated base model shipped with the code is stored in the registry (so it can be rolled back to)."""
+        p = MODEL_DIR / "champion.joblib"
+        j = MODEL_DIR / "champion.json"
+        if not (p.exists() and j.exists()):
+            return
+        info = json.loads(j.read_text(encoding="utf-8"))
+        version = info.get("version", "bundled")
+        if any(r["version"] == version for r in rows):
+            return
+        model = DemandModel.loads(p.read_bytes())
+        self._persist(version, model, "retired" if has_champion else "champion", "bundled", info.get("metrics", {}))
+        self.registry.append({"version": version, "status": "retired" if has_champion else "champion", "source": "bundled", "meta": model.meta,
+                              "metrics": info.get("metrics", {}), "created_at": model.meta.get("trained_at", "")})
 
     def _set_champion(self, model: DemandModel, version: str) -> None:
         self.champion, self.version = model, version

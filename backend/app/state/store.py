@@ -43,6 +43,16 @@ class Snapshot:
     def in_transit(self) -> list[M.Allocation]:
         return [a for a in self.allocations if a.status in ("PENDING", "IN_TRANSIT")]
 
+    def late_by_route(self) -> dict[str, int]:
+        """Whole ticks each road usually runs late (learned from delivered shipments; empty when everything is on time)."""
+        c = self.__dict__.get("_late")
+        if c is None:
+            from app.intelligence.eta import route_lateness
+
+            c = {k: round(v["mean_late_ticks"]) for k, v in route_lateness(self).items()}
+            self.__dict__["_late"] = c
+        return c
+
     def transit_to(self, station_id: str, fuel: str) -> list[M.Allocation]:
         """In-flight shipments per (station, fuel), indexed once per snapshot (planning asks 12x per cycle)."""
         idx = self.__dict__.get("_transit_idx")

@@ -1,0 +1,16 @@
+# keep the build context (and the image) small and free of local artifacts
+.git
+.github
+.env
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+frontend/dist
+loadtest
+scripts
+simulator
+docs/img
+*.log

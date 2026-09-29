@@ -179,6 +179,12 @@ class SimulatorClient:
 
     async def cancel_allocation(self, allocation_id: int) -> dict:
         r = await self._request("POST", f"/v1/allocations/{allocation_id}/cancel", name="cancel_allocation")
+        if r.status_code != 200:
+            try:
+                detail = r.json().get("detail", {})
+            except ValueError:
+                detail = {}
+            raise AllocationRejected(r.status_code, detail.get("code", f"HTTP_{r.status_code}") if isinstance(detail, dict) else "REJECTED", str(detail))
         return r.json()
 
     # ---- admin (scenario / chaos console; self-test only) ----

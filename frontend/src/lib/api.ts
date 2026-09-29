@@ -32,8 +32,9 @@ export interface State {
   stations: Station[]; depots: Depot[]; routes: Route[]; in_transit: any[]; supply_arrivals: any[]; events: any[];
   demand: Record<string, Record<string, number[]>>; risks: Risk[]; recommendations: Decision[];
   incidents: { key: string; type: string; severity: string; message: string; since_tick: number }[];
-  plan: { policy: string; solver_status: string; runtime_ms: number; fallback_used: boolean; fallback_reason: string | null; tick: number; notes: string[]; forecast_model: string; comparison: Record<string, any>; cadence_ticks: number | null } | null;
+  plan: { policy: string; solver_status: string; runtime_ms: number; fallback_used: boolean; fallback_reason: string | null; tick: number; notes: string[]; forecast_model: string; comparison: Record<string, any>; cadence_ticks: number | null; bottlenecks: any[] } | null;
   settings: Settings;
+  regions: any[]; eta: { routes: any[]; shipments: any[]; supply: any[]; supply_mean_late_ticks: number; supply_delayed_share: number };
   source: { kind: string; label: string; supports_admin: boolean };
 }
 

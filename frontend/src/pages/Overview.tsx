@@ -4,7 +4,7 @@ import { get } from "../lib/api";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import RecommendationCard from "../components/RecommendationCard";
-import { Badge, Card, Empty, PageHeader, SevBadge, Stat } from "../components/ui";
+import { Badge, Bar as Meter, Card, Empty, PageHeader, SevBadge, Stat, Td, Th } from "../components/ui";
 import { fuelColor, hours, liters, n0, pct, shortId, title } from "../lib/format";
 import { useLive } from "../lib/live";
 
@@ -134,6 +134,42 @@ export default function Overview() {
                       <b>Seen before ({Math.round((i as any).similar[0].similarity * 100)}% similar):</b> {(i as any).similar[0].summary}
                     </div>
                   )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-3">
+        <Card className="xl:col-span-2" title="Regional demand" subtitle="Stock, current demand, forecast for the next 8 hours, and hours of cover per region" pad={false}>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr><Th>Region</Th><Th right>Stations</Th><Th right>On hand (L)</Th><Th right>Demand now (L/h)</Th><Th right>Forecast 8 h (L)</Th><Th>Hours of cover</Th></tr></thead>
+              <tbody>
+                {(s.regions ?? []).map((r: any) => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <Td className="font-medium text-slate-900">{r.name}</Td><Td right>{r.stations}</Td><Td right>{n0(r.inventory)}</Td><Td right>{n0(r.demand_per_hour)}</Td><Td right>{n0(r.forecast_8h)}</Td>
+                    <Td><div className="flex items-center gap-2"><div className="w-24"><Meter value={Math.min(1, (r.cover_hours ?? 0) / 24)} sev={r.cover_hours == null ? "OK" : r.cover_hours < 4 ? "CRITICAL" : r.cover_hours < 10 ? "WARNING" : "OK"} /></div><span className="tabular text-xs text-slate-600">{r.cover_hours == null ? "—" : `${r.cover_hours} h`}</span></div></Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="grid gap-x-6 gap-y-1 border-t border-slate-100 px-5 py-3 text-xs text-slate-600 sm:grid-cols-2">
+            {(s.regions ?? []).flatMap((r: any) => Object.entries(r.fuels).map(([f, v]: [string, any]) => (
+              <div key={r.id + f} className="flex justify-between"><span>{r.name} · {title(f.toLowerCase())}</span><span className="tabular">{n0(v.demand_per_hour)} L/h · {v.cover_hours == null ? "—" : `${v.cover_hours} h cover`}</span></div>
+            )))}
+          </div>
+        </Card>
+        <Card title="Bottlenecks" subtitle="Which limit is holding the network back right now" pad={false}>
+          {(s.plan?.bottlenecks ?? []).length === 0 ? <Empty icon={<CheckCircle2 size={28} />} title="No binding constraint" text="Every plan fits comfortably inside road, stock and sending limits." /> : (
+            <ul className="divide-y divide-slate-100">
+              {s.plan!.bottlenecks.map((b: any, i: number) => (
+                <li key={i} className="px-5 py-3">
+                  <div className="flex items-center justify-between gap-2"><span className="text-[13px] font-medium text-slate-900">{title(b.kind)} · {b.where}</span><SevBadge sev={b.severity} /></div>
+                  <div className="mt-0.5 text-xs text-slate-600">{b.detail}</div>
+                  <div className="mt-1.5"><Meter value={b.utilization} sev={b.severity === "CRITICAL" ? "CRITICAL" : b.severity === "WARNING" ? "WARNING" : "WATCH"} /></div>
                 </li>
               ))}
             </ul>

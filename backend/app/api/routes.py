@@ -55,6 +55,16 @@ async def reject(did: int, r=Depends(rt)):
         raise HTTPException(409, str(e)) from None
 
 
+@router.post("/decisions/{did}/cancel", dependencies=[Depends(guard)])
+async def cancel(did: int, r=Depends(rt)):
+    try:
+        return (await r.engine.cancel(did)).to_dict()
+    except KeyError:
+        raise HTTPException(404, "unknown decision") from None
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from None
+
+
 @router.post("/decisions/approve-all", dependencies=[Depends(guard)])
 async def approve_all(r=Depends(rt)):
     out = []

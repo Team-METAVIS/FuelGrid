@@ -100,17 +100,17 @@ export default function Network() {
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card title="Shipments in transit" pad={false}>
-          <table className="w-full"><thead><tr><Th>Route</Th><Th>Fuel</Th><Th right>Liters</Th><Th>Status</Th><Th right>ETA tick</Th></tr></thead>
+        <Card title="Shipments in transit" subtitle="Estimated arrival adds the delay each road has actually shown" pad={false}>
+          <table className="w-full"><thead><tr><Th>Road</Th><Th>Fuel</Th><Th right>Liters</Th><Th right>Expected</Th><Th right>Estimated arrival</Th><Th>Risk</Th></tr></thead>
             <tbody>
-              {s.in_transit.length === 0 && <tr><Td className="text-slate-400">No shipments in transit</Td><Td /><Td /><Td /><Td /></tr>}
-              {s.in_transit.map((a) => <tr key={a.id}><Td>{shortId(a.route_id)}</Td><Td>{a.fuel_type}</Td><Td right>{n0(a.quantity)}</Td><Td><Badge tone={statusTone(a.status)}>{a.status}</Badge></Td><Td right>{a.expected_arrival_tick ?? "…"}</Td></tr>)}
+              {s.eta.shipments.length === 0 && <tr><Td className="text-slate-400">No shipments in transit</Td><Td /><Td /><Td /><Td /><Td /></tr>}
+              {s.eta.shipments.map((a: any) => <tr key={a.id}><Td>{shortId(a.route_id)}</Td><Td>{a.fuel}</Td><Td right>{n0(a.quantity)}</Td><Td right>tick {a.expected_tick}</Td><Td right className="font-medium">tick {a.estimated_tick}</Td><Td>{a.risk ? <Badge tone="amber">{a.risk}</Badge> : <span className="text-slate-400">on track</span>}</Td></tr>)}
             </tbody></table>
         </Card>
-        <Card title="Incoming supply" subtitle="Scheduled depot arrivals" pad={false}>
-          <table className="w-full"><thead><tr><Th>Depot</Th><Th>Fuel</Th><Th right>Liters</Th><Th right>Planned tick</Th><Th>Status</Th></tr></thead>
+        <Card title="Incoming supply" subtitle={`Estimated arrival and delay risk · ${Math.round((s.eta.supply_delayed_share ?? 0) * 100)}% of open supply is delayed`} pad={false}>
+          <table className="w-full"><thead><tr><Th>Depot</Th><Th>Fuel</Th><Th right>Liters</Th><Th right>Planned</Th><Th right>Estimated arrival</Th><Th>Delay risk</Th></tr></thead>
             <tbody>
-              {s.supply_arrivals.slice(0, 8).map((a) => <tr key={a.id}><Td>{shortId(a.depot_id)}</Td><Td>{a.fuel_type}</Td><Td right>{n0(a.quantity)}</Td><Td right>{a.planned_tick}</Td><Td><Badge tone={a.status === "DELAYED" ? "amber" : "slate"}>{a.status}</Badge></Td></tr>)}
+              {s.eta.supply.slice(0, 8).map((a: any) => <tr key={a.id}><Td>{shortId(a.depot_id)}</Td><Td>{a.fuel}</Td><Td right>{n0(a.quantity)}</Td><Td right>tick {a.planned_tick}</Td><Td right className="font-medium">tick {a.estimated_tick}</Td><Td><Badge tone={a.status === "DELAYED" ? "amber" : a.delay_risk > 0.3 ? "amber" : "slate"}>{a.status === "DELAYED" ? "delayed" : `${Math.round(a.delay_risk * 100)}%`}</Badge></Td></tr>)}
             </tbody></table>
         </Card>
       </div>

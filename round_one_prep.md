@@ -71,6 +71,7 @@ Screens: Overview (briefing, risks, comparison, live feed), Network, Decisions, 
 | **Risk engine** | Turns forecast into shortage risk | Stock, in-flight shipments, forecast | Hours to stock-out, probability, severity per station and fuel | Deterministic roll-forward + normal-error model |
 | **Incident detector** | Notices trouble | Events, statuses, delays, model error | Incidents with start and recovery | Rules on live state; model surge and drift signals |
 | **Planner + optimizer** | Chooses the shipments | Needs, routes, depot stock, limits | A set of (route, fuel, liters) | **Integer optimization (OR-Tools CP-SAT)**, rule-based fallback |
+| **Delay and bottleneck analytics** | Explains lateness and what is limiting the network | Delivered vs planned arrivals, plan vs limits | Estimated arrivals, delay risk, binding constraints | Per-road learned lateness; utilization of sending capacity, depot stock and road maximum |
 | **Impact engine** | Explains what a plan does | Plan, forecast | Risk and unmet demand before/after, alternatives, "do nothing / rules / optimizer" comparison | Counterfactual roll-forward |
 | **Decision engine** | Runs the workflow | Plan | Stable proposals, approvals, executed shipments, audit | Reconciliation, review gate, auto-approve rules, precheck, idempotent execution |
 | **Model manager** | Owns the model's life | Live history, errors | Champion model, retrain results, versions | Online bias, drift trigger, champion/challenger gate, registry |
@@ -245,7 +246,7 @@ Every control is validated on the server (bad values are refused), written to th
 
 - **Observability:** Prometheus metrics (request rate/latency/errors, source health, breaker, fallbacks, open alerts, forecast error and confidence, model retrains, allocations, service level, database), structured logs, a health page, ready-made Grafana dashboard and alert rules.
 - **Deployment:** `docker compose up --build` (simulator + FuelGrid); optional profiles for Prometheus/Grafana and a local database; multi-stage image with health check and non-root user; CI runs lint, tests, front-end build, image build and a start-up smoke test.
-- **Testing:** 94 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
+- **Testing:** 104 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
 
 ---
 

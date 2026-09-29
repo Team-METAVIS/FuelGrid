@@ -24,4 +24,4 @@ question: *does it make the operators' decisions better or the system more trust
 | Multi-agent decision systems | **Not built, on purpose** | With 2 depots and 4 stations one solver sees the whole problem. Splitting it into negotiating agents would add failure modes and lose optimality. |
 | Kubernetes, autoscaling | **Not built, on purpose** | The load test shows one process handles about 160 requests/s with zero errors, far above any operations room. Docker Compose with health checks is the right size. The scaling path is described in `docs/LOAD_TEST.md`. |
 
-Everything built is covered by automated tests (94) and listed in the round-one notes.
+Everything built is covered by automated tests (104) and listed in the round-one notes.

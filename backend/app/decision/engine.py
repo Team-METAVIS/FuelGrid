@@ -53,6 +53,7 @@ class DecisionEngine:
         self._seq = 0
         self.pred: dict[tuple[str, str, int], float] = {}
         self.ape_n = 0
+        self._prev_inv: dict | None = None
         self.cadence: float | None = None  # smoothed ticks between plans; > decision_every_ticks means the world outpaces planning
         self.raw_pred: dict[tuple[str, str, int], tuple[float, float | None]] = {}
         self.ape: deque[float] = deque(maxlen=300)
@@ -72,6 +73,7 @@ class DecisionEngine:
         self.decisions.clear()
         self.history.clear()
         self.pred.clear()
+        self._prev_inv = None
         self.cadence = None
         self.raw_pred.clear()
         manager.bias.clear()
@@ -328,6 +330,53 @@ class DecisionEngine:
     def mape(self) -> float | None:
         return sum(self.ape) / len(self.ape) if self.ape else None
 
+    def _inventory_anomalies(self, snap: Snapshot) -> dict[str, dict]:
+        """A tank that falls much faster than the demand we observed explains (a meter fault, a leak, a theft) is an incident."""
+        found: dict[str, dict] = {}
+        prev = self._prev_inv
+        if prev and snap.tick > prev["tick"]:
+            for st in snap.stations.values():
+                if st.status != "OPEN":
+                    continue
+                for fuel, inv in st.inventory.items():
+                    before = prev["inv"].get((st.id, fuel))
+                    if before is None:
+                        continue
+                    seen = self.store.demand.get((st.id, fuel), {})
+                    expected = sum(seen.get(t, (0.0,))[0] for t in range(prev["tick"] + 1, snap.tick + 1))
+                    drop = before - inv
+                    if drop > 1.6 * expected + max(800.0, 0.05 * st.capacity.get(fuel, 0.0)):
+                        found[f"inv-drop-{st.id}-{fuel}"] = {"type": "abnormal_inventory_drop", "severity": "high",
+                                                             "message": f"{st.name} {fuel} fell {drop:,.0f} L but only {expected:,.0f} L of demand was recorded"}
+        self._prev_inv = {"tick": snap.tick, "inv": {(s.id, f): v for s in snap.stations.values() for f, v in s.inventory.items()}}
+        return found
+
+    async def cancel(self, did: int, actor: str = "operator") -> Decision:
+        """Withdraw a shipment that was accepted but has not departed yet (source must allow it)."""
+        d = self.decisions[did]
+        fn = getattr(self.client, "cancel_allocation", None)
+        if d.status != "EXECUTED" or d.sim_allocation_id is None:
+            raise ValueError(f"decision is {d.status}; only a sent shipment can be cancelled")
+        if fn is None:
+            raise ValueError("this data source cannot cancel shipments")
+        try:
+            await fn(d.sim_allocation_id)
+        except AllocationRejected as e:
+            raise ValueError(f"cannot cancel: {e.code} (the shipment has probably already departed)") from None
+        d.status, d.result, d.actor = "CANCELLED", "cancelled by operator", actor
+        snap = self.store.snapshot
+        if snap:
+            for a in snap.allocations:
+                if a.id == d.sim_allocation_id:
+                    a.status = "CANCELLED"
+            dep = snap.depots.get(d.rec.depot_id)
+            if dep and d.rec.fuel in dep.inventory:
+                dep.inventory[d.rec.fuel] += d.rec.quantity  # the source refunds the depot stock
+            snap.__dict__.pop("_transit_idx", None)
+        self.repo.audit(self.run_id, "operator", f"Shipment #{did} cancelled by {actor} ({d.rec.quantity:,.0f} L {d.rec.fuel} to {d.rec.station_id})", "warn", d.rec.tick)
+        self._persist(d, snap)
+        return d
+
     @staticmethod
     def _until(snap: Snapshot, key: str, ident: str) -> str:
         ends = [e.end_tick for e in snap.events if e.status == "ACTIVE" and (ident in (e.parameters.get(key) or []))]
@@ -382,6 +431,7 @@ class DecisionEngine:
         if mp is not None and mp > self.cfg.drift_mape:
             now["model-drift"] = {"type": "model_drift", "severity": "medium",
                                   "message": f"Forecast error {mp:.0%} is above the {self.cfg.drift_mape:.0%} limit; demand pattern may have shifted"}
+        now.update(self._inventory_anomalies(snap))
         for sid, fuel, z, level in plan.anomalies:
             now[f"anomaly-{sid}-{fuel}"] = {"type": "demand_anomaly", "severity": "medium",
                                             "message": f"Demand anomaly at {sid} {fuel}: x{level:.2f} of baseline (z={z:.1f})"}

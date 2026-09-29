@@ -18,7 +18,7 @@ def incoming_by_tick(
     out: dict[int, float] = {}
     for a in snap.transit_to(sid, fuel):
         r = snap.routes.get(a.route_id)
-        eta = a.expected_arrival_tick or (snap.tick + 1 + (r.transit_ticks if r else 2))
+        eta = (a.expected_arrival_tick or (snap.tick + 1 + (r.transit_ticks if r else 2))) + snap.late_by_route().get(a.route_id, 0)
         out[eta] = out.get(eta, 0) + a.quantity
     for eta, q in extra or []:
         out[eta] = out.get(eta, 0) + q

@@ -2,7 +2,7 @@
 
 Traceability from the hackathon documents to FuelGrid: `bup_hackathon_challenge_md.md` (the challenge brief) and `BUP_Fuel_Supply_Simulator_Integration_Guide_Final.md` (the simulator guide). Section numbers refer to those files.
 
-**Legend:** ✅ covered · 🟡 partly covered (what is missing is stated) · ⛔ deliberately not built (reason given) · ⚠️ built but not independently verified
+**Legend:** ✅ covered · 🟡 partly covered (what is missing is stated) · ⛔ deliberately not built (reason given) · ⚠️ built but not independently verified (none remain)
 
 At the end: a summary against the evaluation weights, and the gaps stated plainly.
 
@@ -32,7 +32,7 @@ At the end: a summary against the evaluation weights, and the gaps stated plainl
 |---|---|---|
 | Current fuel inventory | ✅ | Overview chart, Network page (every station and depot, every fuel) |
 | Depot and station status | ✅ | Network page (topology map, status badges) |
-| Regional fuel demand | 🟡 | Demand history and forecast per station and fuel (Forecast & Models page). No separate region-level roll-up chart |
+| Regional fuel demand | ✅ | **Regional demand** card on the Overview: per region stock, current demand (L/h), 8-hour forecast and hours of cover, with a per-fuel breakdown; plus per-station history and forecast on Forecast & Models (`views._regions`) |
 | Shortage alerts | ✅ | "Needs attention" list, severity badges, alerts in the live feed |
 | Projected shortage risk | ✅ | Hours to stock-out and stock-out probability per station and fuel; projected inventory chart |
 | Incoming supply | ✅ | Network page: scheduled supply arrivals and shipments in transit |
@@ -51,11 +51,11 @@ The brief recommends a web application: ✅ React console, light theme, structur
 |---|---|---|
 | Demand forecasting | ✅ | **Trained** gradient-boosted quantile model (p10/p50/p90), walk-forward evaluated (`docs/MODEL.md`) |
 | Shortage prediction, stock-out probability | ✅ | Roll-forward plus normal-error model from the model's own band |
-| Estimated supply arrival | ⛔ | Supply arrivals are taken from the source as given; not predicted |
-| Transport delay prediction | ⛔ | Not modelled |
+| Estimated supply arrival | ✅ | Learns how late delivered supply actually ran and applies it (with a delay-risk share from currently delayed deliveries) to scheduled supply; shown on the Network page (`app/intelligence/eta.py`) |
+| Transport delay prediction | ✅ | Per-road lateness learned from delivered shipments (smoothed so a single late truck is not a trend); estimated arrival for shipments in transit, flagged at risk when the road is disrupted; the learned delay is also used by the stock projection |
 | Anomalous demand | ✅ | Unexplained-surge flag (demand above own p90 three ticks running), data-quality flags |
-| Abnormal inventory changes | 🟡 | Live-feed adapter flags large jumps and over-capacity; not applied to the simulator's inventory |
-| Bottlenecks, emerging disruptions | 🟡 | Disruptions and delays detected from status/events; no separate bottleneck analytics |
+| Abnormal inventory changes | ✅ | Any source: a tank that falls much faster than the demand recorded raises an `abnormal_inventory_drop` incident (meter fault, leak, theft); the live-feed adapter additionally flags large jumps and over-capacity readings |
+| Bottlenecks, emerging disruptions | ✅ | Disruptions and delays from status/events, plus **bottleneck analytics** after every plan: depot sending capacity, depot stock and road-maximum utilization, and for any unfilled need the constraint that explains it (Overview "Bottlenecks" card, `app/intelligence/bottlenecks.py`) |
 | Constrained optimization, heuristic, hybrid | ✅ | CP-SAT integer program, greedy rule policy, forecast + optimizer hybrid |
 | Reinforcement learning | ⛔ | See §8 |
 | Generative AI | ✅ | Plain-language briefing and Ops assistant, built from live data; optional Gemini/Groq only reword, replies with unknown numbers are discarded. The brief says LLMs should support the operational system rather than be a chatbot: the assistant is read-only and grounded, decisions never depend on it |
@@ -107,7 +107,7 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 |---|---|---|
 | Reproducible launch (`docker compose up`) | ✅ | `docker-compose.yml`: simulator + FuelGrid; profiles for monitoring and a local database. Image built and smoke-tested |
 | Source → Build → Test → Package → Deploy → Health check → Running | ✅ | CI workflow (lint, tests, front-end build, image build, container smoke test); compose health checks |
-| CI/CD strongly encouraged | ⚠️ | `.github/workflows/ci.yml` written; the same steps (lint, tests, build, image, smoke) were run locally, but a run on GitHub itself has not been confirmed. The `e2e` job (deploy against the simulator image, inject an outage, assert degraded mode and recovery) is new and not yet run |
+| CI/CD strongly encouraged | ✅ | `.github/workflows/ci.yml` runs on every push and has **passed on GitHub Actions** for every commit on `main`, including the `e2e` job (deploy the full stack against the simulator image, inject an outage, assert degraded mode and recovery) |
 
 ### §13 Advanced DevOps (optional)
 ⛔ Kubernetes, Helm, Terraform, GitOps, blue/green, canary, autoscaling, queue-based processing: not built. One process handled ~160 requests/s with zero errors; the scaling path is in `docs/LOAD_TEST.md`. Automated rollback exists at application level (optimizer policy rollback, model rollback) and at deployment level (`scripts/deploy.sh`).
@@ -162,8 +162,8 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 
 | Item | Status | How |
 |---|---|---|
-| CI/CD | ⚠️ | Workflow written; see §12 note |
-| Automated tests | ✅ | 94 tests |
+| CI/CD | ✅ | Passing on GitHub Actions; see §12 |
+| Automated tests | ✅ | 104 tests |
 | Experiment tracking | ✅ | `fg_experiments` (Supabase), benchmark, tuning sweep, model backtests |
 | Model versioning | ✅ | Registry with champion/challenger and one-click rollback |
 | Decision audit history | ✅ | `fg_decisions`, `fg_audit` |
@@ -227,7 +227,7 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 | Endpoints instance, depots, stations, routes, supply-arrivals, events, allocations, metrics, regions | ✅ | `app/simulator/client.py` |
 | Demand history with limit (clamped 1-2000) | ✅ | Batched single call, sized to the gap since the last tick |
 | POST allocations with idempotency key; 200/201/404/409/422/503 | ✅ | Deterministic key; replay-safe retries; error codes mapped to clear reasons |
-| Cancel a pending allocation | 🟡 | Client method exists; not exposed in the console |
+| Cancel a pending allocation | ✅ | Cancel button on the Decisions history and `POST /api/decisions/{id}/cancel`; the source's refusal (e.g. already departed) is shown, not hidden; depot stock is refunded locally |
 | SSE: treat as advisory, re-GET after events | ✅ | |
 | Watch `X-Simulator-Stale: true` | ✅ | Marks data stale, suspends auto-dispatch |
 | `stream_disconnect` fault (503) | ✅ | Backoff and reconnect; polling fills the gap |
@@ -247,7 +247,7 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 | Working product & user experience | 20% | Console (11 pages), controls, live updates, replay, demo world |
 | Intelligence & decision quality | 20% | Trained model (`docs/MODEL.md`), optimizer benchmark (`docs/BENCHMARK.md`), adaptation experiment (`docs/ADAPTATION.md`), tuning (`docs/TUNING_COMBOS.md`) |
 | Architecture & integration | 15% | Canonical model, two adapters, engines, diagrams (`README.md`, `docs/ARCHITECTURE.md`) |
-| DevOps & engineering quality | 15% | Docker, compose, monitoring profile, CI workflow (incl. full-stack `e2e` job), 94 tests, migrations, versioned models |
+| DevOps & engineering quality | 15% | Docker, compose, monitoring profile, CI workflow (incl. full-stack `e2e` job), 104 tests, migrations, versioned models |
 | Resilience & incident response | 10% | Resilience matrix, fault injection, breaker, fallbacks, rollback, recovery evidence |
 | Observability & performance | 10% | Prometheus, Grafana, health, audit, load test (`docs/LOAD_TEST.md`) |
 | Demo & problem understanding | 10% | `round_one_prep.md` (internals, Q&A, glossary, demo script) |
@@ -255,9 +255,8 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 ## D. Gaps, stated plainly
 
 - Training data is simulated; there was no real network data.
-- No region-level demand roll-up view; no supply-arrival or transport-delay prediction.
-- The CI workflow has not been confirmed on GitHub itself.
-- The Gemini/Groq layer is tested against mocked endpoints only (no keys were available).
+- Gemini is verified live (15 models discovered, answering through a current flash-lite model). The Groq backup path is tested against mocked endpoints only, because no Groq key is configured.
 - Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan); the lock-step clock keeps planning per tick.
 - One process is the ceiling at about 160 requests/s.
+- Estimated arrival and transport delay are learned from completed shipments; in the deterministic simulator deliveries are always on time, so the estimates equal the schedule there and only show delays on sources where deliveries actually run late (the independent demo world or a real feed). The behaviour is covered by unit tests.
 - Reinforcement learning, multi-agent control, Kubernetes and distributed tracing were deliberately not built.

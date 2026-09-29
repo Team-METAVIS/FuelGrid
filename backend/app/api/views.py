@@ -5,6 +5,8 @@ import time
 
 import psutil
 
+from app.intelligence.eta import report as eta_report
+
 _PROC = psutil.Process()
 _START = time.time()
 VERSION = "0.1.0"
@@ -95,10 +97,48 @@ def _build_body(rt, snap) -> dict:
         "plan": {"policy": plan.policy, "solver_status": plan.solver_status, "runtime_ms": round(plan.runtime_ms, 1),
                  "fallback_used": plan.fallback_used, "fallback_reason": plan.fallback_reason, "tick": plan.tick,
                  "notes": plan.notes, "forecast_model": plan.forecast_model, "comparison": plan.comparison,
-                 "cadence_ticks": round(eng.cadence, 1) if eng.cadence is not None else None} if plan else None,
+                 "cadence_ticks": round(eng.cadence, 1) if eng.cadence is not None else None,
+                 "bottlenecks": plan.bottlenecks} if plan else None,
+        "regions": _regions(rt, snap, plan),
+        "eta": eta_report(snap),
         "settings": settings_view(rt),
         "source": {"kind": rt.client.kind, "label": rt.client.label, "supports_admin": rt.client.supports_admin},
     }
+
+
+def _regions(rt, snap, plan) -> list[dict]:
+    """Regional roll-up: stock, recent demand, forecast demand and hours of cover per region."""
+    per_h = 60 / snap.tick_minutes  # ticks per hour
+    ahead = max(1, int(8 * per_h))
+    regions: dict[str, dict] = {}
+    for st in snap.stations.values():
+        rid = st.region_id or "all"
+        r = regions.setdefault(rid, {"id": rid, "name": rid.replace("region-", "").replace("_", " ").title(), "stations": 0, "inventory": 0.0, "capacity": 0.0,
+                                     "demand_per_hour": 0.0, "forecast_8h": 0.0, "fuels": {}})
+        r["stations"] += 1
+        for fuel in snap.fuels:
+            if fuel not in st.capacity:
+                continue
+            inv, cap = st.inventory.get(fuel, 0.0), st.capacity.get(fuel, 0.0)
+            recent = [v for _, v, _ in rt.store.series(st.id, fuel, 4)]
+            now_h = (sum(recent) / len(recent)) * per_h if recent else 0.0
+            f = plan.forecasts.get((st.id, fuel)) if plan else None
+            fc = sum(f.per_tick[:ahead]) if f else now_h * 8
+            r["inventory"] += inv
+            r["capacity"] += cap
+            r["demand_per_hour"] += now_h
+            r["forecast_8h"] += fc
+            fx = r["fuels"].setdefault(fuel, {"inventory": 0.0, "demand_per_hour": 0.0, "forecast_8h": 0.0})
+            fx["inventory"] += inv
+            fx["demand_per_hour"] += now_h
+            fx["forecast_8h"] += fc
+    for r in regions.values():
+        hourly = r["forecast_8h"] / 8 if r["forecast_8h"] else r["demand_per_hour"]
+        r["cover_hours"] = round(r["inventory"] / hourly, 1) if hourly > 0 else None
+        for fx in r["fuels"].values():
+            h = fx["forecast_8h"] / 8 if fx["forecast_8h"] else fx["demand_per_hour"]
+            fx["cover_hours"] = round(fx["inventory"] / h, 1) if h > 0 else None
+    return sorted(regions.values(), key=lambda x: x["id"])
 
 
 def settings_view(rt) -> dict:

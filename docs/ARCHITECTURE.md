@@ -220,3 +220,13 @@ The simulator's Run mode ticks at a fixed speed regardless of planning. `LockSte
 itself (step, read, plan). The demo world runs lock-step the same way. The engine tracks ticks between plans and the console warns
 when the world outpaces planning.
 
+## Delay, bottleneck and regional analytics
+
+* `app/intelligence/eta.py` learns per-road lateness from delivered shipments (smoothed towards on-time when samples are few) and
+  delay risk for supply; the stock projection uses the learned delay, and the Network page shows estimated arrivals.
+* `app/intelligence/bottlenecks.py` reports, after each plan, how close depot sending capacity, depot stock and road maximums are to
+  binding, and which of them explains any need left unfilled.
+* `views._regions` rolls stock, current demand, the 8-hour forecast and hours of cover up to region level.
+* The decision engine flags a tank that falls much faster than recorded demand (`abnormal_inventory_drop`) and can cancel a sent
+  shipment that has not departed (`POST /api/decisions/{id}/cancel`).
+

@@ -341,6 +341,15 @@ class FeedSource:
         except Exception as e:  # the pull endpoint remains the source of truth
             log.warning("feed_webhook_failed", error=str(e)[:100])
 
+    async def cancel_allocation(self, order_id: int) -> dict:
+        o = self.orders.get(order_id)
+        if o is None:
+            raise AllocationRejected(404, "ALLOCATION_NOT_FOUND", "unknown order")
+        if o.status != "PENDING":
+            raise AllocationRejected(409, "CANNOT_CANCEL", f"order is {o.status}")
+        o.status = "CANCELLED"
+        return o.model_dump(mode="json")
+
     def ack(self, a: Ack) -> bool:
         o = self.orders.get(a.order_id)
         if o is None:
