@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+uvicorn.log
+.pytest_cache/
+.ruff_cache/
+bench*.log
+frontend/node_modules/
+frontend/dist/
+docker_build.log
+loadtest/results/*_history.csv
+loadtest/results/*_exceptions.csv
+loadtest/results/*_failures.csv
+loadtest/results/run*
+loadtest/results/DONE

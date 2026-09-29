@@ -1,0 +1,62 @@
+# FuelGrid - one command:   docker compose up --build
+#   console      http://localhost:8080
+#   simulator    http://localhost:8000   (organizer image, unmodified)
+# Optional monitoring stack:   docker compose --profile monitoring up --build
+#   prometheus   http://localhost:9090      grafana http://localhost:3000  (admin / admin, dashboard pre-loaded)
+# Optional local database (no Supabase account needed):   docker compose --profile localdb up --build
+services:
+  simulator:
+    image: asifmahmoud414/bup-fuel-supply-simulator:1.0.0
+    environment:
+      SIMULATION_SPEED: ${SIMULATION_SPEED:-8}
+      TICK_MINUTES: ${TICK_MINUTES:-15}
+      SIMULATOR_START_MODE: ${SIMULATOR_START_MODE:-paused}
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  fuelgrid:
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    image: fuelgrid:${GIT_SHA:-dev}
+    depends_on:
+      simulator: { condition: service_healthy }
+    environment:
+      SIM_BASE_URL: http://simulator:8000
+      # Supabase Postgres (session pooler URL). Leave empty to run memory-only, or use the localdb profile.
+      DATABASE_URL: ${DATABASE_URL:-}
+      AUTO_EXECUTE: ${AUTO_EXECUTE:-false}
+      API_KEY: ${API_KEY:-}
+    ports: ["8080:8080"]
+    restart: unless-stopped
+
+  localdb:
+    profiles: ["localdb"]
+    image: postgres:16-alpine
+    environment: { POSTGRES_PASSWORD: fuelgrid, POSTGRES_DB: fuelgrid }
+    ports: ["5432:5432"]
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.55.0
+    volumes: ["./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "./deploy/alerts.yml:/etc/prometheus/alerts.yml:ro"]
+    ports: ["9090:9090"]
+    depends_on: [fuelgrid]
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus]

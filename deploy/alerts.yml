@@ -1,0 +1,37 @@
+groups:
+  - name: fuelgrid
+    rules:
+      - alert: FuelGridDown
+        expr: up{job="fuelgrid"} == 0
+        for: 20s
+        labels: { severity: critical }
+        annotations: { summary: "FuelGrid backend is not reachable" }
+      - alert: SimulatorCircuitBreakerOpen
+        expr: fg_sim_breaker_open == 1
+        for: 10s
+        labels: { severity: warning }
+        annotations: { summary: "Simulator calls are failing; FuelGrid is serving cached state" }
+      - alert: DegradedMode
+        expr: fg_degraded == 1
+        for: 30s
+        labels: { severity: warning }
+        annotations: { summary: "Stale or unreachable simulator data" }
+      - alert: FallbackPolicyActive
+        expr: increase(fg_fallback_total[2m]) > 0
+        labels: { severity: warning }
+        annotations: { summary: "A fallback (planner or forecaster) was activated" }
+      - alert: ForecastErrorHigh
+        expr: fg_forecast_mape > 0.25
+        for: 1m
+        labels: { severity: warning }
+        annotations: { summary: "Forecast error above 25% - possible demand drift" }
+      - alert: CriticalShortageRisk
+        expr: fg_open_alerts{severity="CRITICAL"} > 0
+        for: 30s
+        labels: { severity: critical }
+        annotations: { summary: "At least one station-fuel pair is projected to run out within 2 hours" }
+      - alert: DatabaseDown
+        expr: fg_db_up == 0
+        for: 30s
+        labels: { severity: warning }
+        annotations: { summary: "Database unreachable; writes are being buffered" }
