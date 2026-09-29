@@ -1,0 +1,26 @@
+# FuelGrid on Kubernetes (app only):          kubectl apply -k deploy/k8s/base
+# With Prometheus + Grafana:                   kubectl apply -k deploy
+# Deploy a specific build:                     cd deploy/k8s/base && kustomize edit set image fuelgrid=fuelgrid:<git sha>
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fuelgrid
+labels:
+  - pairs: { app.kubernetes.io/part-of: fuelgrid }
+resources:
+  - namespace.yaml
+  - simulator.yaml
+  - fuelgrid.yaml
+configMapGenerator:
+  - name: fuelgrid-config
+    literals:
+      - SIM_BASE_URL=http://simulator:8000
+      - AUTO_EXECUTE=false        # a person approves shipments
+      - ACTIVE_POLICY=optimizer
+  - name: simulator-config
+    literals:
+      - SIMULATION_SPEED=8
+      - TICK_MINUTES=15
+      - SIMULATOR_START_MODE=paused
+images:
+  - name: fuelgrid
+    newTag: dev

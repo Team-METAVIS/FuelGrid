@@ -1,0 +1,24 @@
+# FuelGrid + Prometheus + Grafana on Kubernetes:   kubectl apply -k deploy
+# (App only: kubectl apply -k deploy/k8s/base.) This file sits in deploy/ so it can reuse the compose monitoring config.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fuelgrid
+labels:
+  - pairs: { app.kubernetes.io/part-of: fuelgrid }
+resources:
+  - k8s/base
+  - k8s/monitoring/monitoring.yaml
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml
+      - alerts.yml
+  - name: grafana-datasources
+    files:
+      - grafana/provisioning/datasources/prometheus.yml
+  - name: grafana-dashboard-provider
+    files:
+      - grafana/provisioning/dashboards/dashboards.yml
+  - name: grafana-dashboards
+    files:
+      - grafana/dashboards/fuelgrid.json

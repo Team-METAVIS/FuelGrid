@@ -13,7 +13,7 @@ Every deliverable in the challenge brief, mapped to where it lives and how to ch
 | 4 | Intelligence component | Trained quantile demand model (`backend/app/ml`), risk engine, OR-Tools optimizer with rule-based fallback (`backend/app/intelligence`) | `docs/MODEL.md`, `docs/BENCHMARK.md`; *Forecast & Models* and *Decisions* pages |
 | 5 | Operator interface | `frontend/src/pages`: Overview, Network, Decisions, Controls, Forecast & Models, Scenarios & Chaos, Ops assistant, Replay, Data sources, System health, Audit log | Open the console |
 | 6 | Architecture diagram | `README.md` §1 and `docs/ARCHITECTURE.md` (Mermaid, rendered by GitHub) | View on GitHub |
-| 7 | Deployment | `docker compose up --build`; `scripts/deploy.sh` (versioned, health-gated, automatic rollback) | CI job `e2e` deploys the full stack on every push |
+| 7 | Deployment | `docker compose up --build`; `scripts/deploy.sh` (versioned, health-gated, automatic rollback); Kubernetes: `kubectl apply -k deploy` (`docs/KUBERNETES.md`) | CI jobs `e2e` (Compose) and `k8s` (kind cluster) deploy on every push |
 | 8 | Observability evidence | `/metrics` (Prometheus), `deploy/alerts.yml` (7 alert rules), `deploy/grafana/dashboards/fuelgrid.json`, structured JSON logs, audit trail | `docker compose --profile monitoring up --build` → Grafana http://127.0.0.1:3000 |
 | 9 | Resilience demonstration | Resilience matrix in `docs/ARCHITECTURE.md`; fallback tests in `backend/tests`; CI job `e2e` injects a simulator outage and asserts degraded mode and recovery | `docs/DEMO_RUNBOOK.md` step 4 |
 | 10 | Load-test evidence | `loadtest/locustfile.py` (workload), `loadtest/results/*_stats.csv` (raw), `docs/LOAD_TEST.md` (analysis) | `bash loadtest/run.sh` then `python loadtest/summarize.py` |
@@ -23,7 +23,7 @@ Every deliverable in the challenge brief, mapped to where it lives and how to ch
 
 | Item | Status | Where |
 |---|---|---|
-| CI/CD | Built | `.github/workflows/ci.yml`: lint → tests → type-check and build → image → smoke test → full-stack deploy and resilience test |
+| CI/CD | Built | `.github/workflows/ci.yml`: lint → tests → type-check and build → image → smoke test → full-stack deploy and resilience test → Kubernetes deploy and self-healing test |
 | Automated tests | Built (94) | `backend/tests` |
 | Experiment tracking | Built | `fg_experiments` table, `docs/TUNING.md`, `docs/TUNING_COMBOS.md` |
 | Model versioning | Built | Model registry, champion/challenger gate, one-click activation (`docs/ADAPTATION.md`) |

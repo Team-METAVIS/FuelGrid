@@ -1,0 +1,69 @@
+# FuelGrid backend + operator console.
+#
+# Exactly one replica, replaced with Recreate, and no autoscaler: the decision engine and the lock-step clock run
+# inside the process, so two pods would each plan and each send shipments to the same simulator. One process handled
+# ~160 requests/s in the load test (docs/LOAD_TEST.md), far above what an operations room needs. Scaling out would
+# first need the engine split from the API with leader election.
+#
+# Secrets (all optional; without them the app runs memory-only with the built-in assistant):
+#   kubectl -n fuelgrid create secret generic fuelgrid-secrets --from-env-file=.env
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fuelgrid
+  labels: { app.kubernetes.io/name: fuelgrid }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  revisionHistoryLimit: 5          # kubectl -n fuelgrid rollout undo deployment/fuelgrid
+  selector:
+    matchLabels: { app.kubernetes.io/name: fuelgrid }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: fuelgrid }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: fuelgrid
+          image: fuelgrid
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: fuelgrid-config }
+            - secretRef: { name: fuelgrid-secrets, optional: true }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:              # the trained model loads at start
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:            # stays ready in degraded mode: the console keeps serving cached state
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 768Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fuelgrid
+  labels: { app.kubernetes.io/name: fuelgrid }
+spec:
+  selector: { app.kubernetes.io/name: fuelgrid }
+  ports:
+    - { name: http, port: 8080, targetPort: http }

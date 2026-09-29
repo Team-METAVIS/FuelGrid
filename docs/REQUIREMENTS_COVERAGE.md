@@ -110,7 +110,9 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 | CI/CD strongly encouraged | ⚠️ | `.github/workflows/ci.yml` written; the same steps (lint, tests, build, image, smoke) were run locally, but a run on GitHub itself has not been confirmed. The `e2e` job (deploy against the simulator image, inject an outage, assert degraded mode and recovery) is new and not yet run |
 
 ### §13 Advanced DevOps (optional)
-⛔ Kubernetes, Helm, Terraform, GitOps, blue/green, canary, autoscaling, queue-based processing: not built. One process handled ~160 requests/s with zero errors; the scaling path is in `docs/LOAD_TEST.md`. Automated rollback exists at application level (optimizer policy rollback, model rollback) and at deployment level (`scripts/deploy.sh`).
+✅ Kubernetes: Kustomize manifests for the app, simulator and monitoring, deployed to a kind cluster in CI with a self-healing check (`docs/KUBERNETES.md`).
+
+⛔ Helm, Terraform, GitOps, blue/green, canary, autoscaling, queue-based processing: not built. One process handled ~160 requests/s with zero errors; the scaling path is in `docs/LOAD_TEST.md`. Automated rollback exists at application level (optimizer policy rollback, model rollback) and at deployment level (`scripts/deploy.sh`).
 
 ### §14 Observability
 
@@ -186,7 +188,8 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 | Policy rollback | ✅ |
 | Drift detection | ✅ |
 | Event-driven architecture, streaming | ✅ in-process event bus and SSE |
-| Kubernetes, autoscaling | ⛔ |
+| Kubernetes | ✅ `docs/KUBERNETES.md` |
+| Autoscaling | ⛔ one in-process planner by design |
 | Generative-AI operations assistant | ✅ |
 
 Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
@@ -260,4 +263,4 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 - The Gemini/Groq layer is tested against mocked endpoints only (no keys were available).
 - Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan); the lock-step clock keeps planning per tick.
 - One process is the ceiling at about 160 requests/s.
-- Reinforcement learning, multi-agent control, Kubernetes and distributed tracing were deliberately not built.
+- Reinforcement learning, multi-agent control, autoscaling and distributed tracing were deliberately not built.

@@ -1,0 +1,45 @@
+# Organizer simulator, unmodified image.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simulator
+  labels: { app.kubernetes.io/name: simulator }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: simulator }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: simulator }
+    spec:
+      containers:
+        - name: simulator
+          image: asifmahmoud414/bup-fuel-supply-simulator:1.0.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: simulator-config }
+          ports:
+            - { name: http, containerPort: 8000 }
+          readinessProbe:
+            httpGet: { path: /v1/health, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /v1/health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simulator
+  labels: { app.kubernetes.io/name: simulator }
+spec:
+  selector: { app.kubernetes.io/name: simulator }
+  ports:
+    - { name: http, port: 8000, targetPort: http }

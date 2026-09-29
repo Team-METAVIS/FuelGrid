@@ -77,3 +77,44 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  k8s:
+    # Kubernetes: deploy the manifests to a throwaway kind cluster, check health, kill the pod, check self-healing.
+    needs: [package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with: { cluster_name: fuelgrid }
+      - name: Build image and load it into the cluster
+        run: |
+          docker build --build-arg GIT_SHA=${{ github.sha }} -t fuelgrid:${{ github.sha }} .
+          kind load docker-image fuelgrid:${{ github.sha }} --name fuelgrid
+      - name: Deploy (app + monitoring)
+        run: |
+          cd deploy/k8s/base && kustomize edit set image fuelgrid=fuelgrid:${{ github.sha }} && cd ../../..
+          kubectl apply -k deploy
+          kubectl -n fuelgrid rollout status deployment/simulator --timeout=180s
+          kubectl -n fuelgrid rollout status deployment/fuelgrid --timeout=180s
+          kubectl -n fuelgrid rollout status deployment/prometheus --timeout=120s
+      - name: Health check through the Service
+        run: |
+          kubectl -n fuelgrid port-forward svc/fuelgrid 8080:8080 >/tmp/pf.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/api/health | grep -q '"data_source":{"status":"healthy"' && break; sleep 2; done
+          curl -sf http://127.0.0.1:8080/api/health | tee /tmp/health.json | grep -q '"data_source":{"status":"healthy"'
+          grep -q '"build":"${{ github.sha }}"' /tmp/health.json
+      - name: "Self-healing: delete the pod, a new one becomes healthy"
+        run: |
+          kubectl -n fuelgrid delete pod -l app.kubernetes.io/name=fuelgrid --timeout=120s   # returns once the old pod is gone
+          kubectl -n fuelgrid rollout status deployment/fuelgrid --timeout=180s
+          kubectl -n fuelgrid wait pod -l app.kubernetes.io/name=fuelgrid --for=condition=Ready --timeout=180s
+          pkill -f "port-forward" || true
+          kubectl -n fuelgrid port-forward svc/fuelgrid 8080:8080 >/tmp/pf.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/api/health | grep -q '"data_source":{"status":"healthy"' && break; sleep 2; done
+          curl -sf http://127.0.0.1:8080/api/health | grep -q '"data_source":{"status":"healthy"'
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n fuelgrid get all
+          kubectl -n fuelgrid describe pods | tail -80
+          kubectl -n fuelgrid logs deployment/fuelgrid --tail=100 || true

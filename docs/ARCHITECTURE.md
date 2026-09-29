@@ -133,7 +133,11 @@ recover. This was found (and fixed) through load testing; see `docs/LOAD_TEST.md
 * `docker compose --profile monitoring up` adds Prometheus (with alert rules in `deploy/alerts.yml`) and Grafana with
   a pre-provisioned dashboard (`deploy/grafana/dashboards/fuelgrid.json`).
 * `docker compose --profile localdb up` provides a local Postgres if Supabase is not available.
-* CI (`.github/workflows/ci.yml`): lint, tests, type-check + frontend build, image build, container smoke test.
+* Kubernetes: `kubectl apply -k deploy` runs the same stack (one FuelGrid replica with `Recreate`, because the planner
+  is in-process; probes, limits, hardened non-root pod). See `docs/KUBERNETES.md`.
+* `scripts/deploy.sh <tag>`: health-gated Compose deploy that restarts the previous version if the new one is unhealthy.
+* CI (`.github/workflows/ci.yml`): lint, tests, type-check + frontend build, image build, container smoke test,
+  full-stack deploy with an injected simulator outage (`e2e`), Kubernetes deploy with a self-healing check (`k8s`).
 * Build version (git SHA) is baked into the image and shown by `/api/health`.
 
 ## Forecast v2 (why the numbers are more accurate)

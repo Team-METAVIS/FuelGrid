@@ -237,6 +237,8 @@ cd backend && uv sync --python 3.12 && uv run uvicorn app.main:app --host 127.0.
 
 Or everything in containers: `docker compose up --build` (add `--profile monitoring` for Prometheus + Grafana). On Windows use `127.0.0.1`, not `localhost`.
 
+On Kubernetes: `kubectl apply -k deploy` (app + Prometheus + Grafana). See [docs/KUBERNETES.md](docs/KUBERNETES.md).
+
 **See it run on a network the platform has never seen:** open *Data sources* → *Start demo world* → turn on auto-approve → click the "change the world" buttons. Or drive it from outside over HTTP:
 `cd backend && uv run python -m app.worldgen.run --url http://127.0.0.1:8080 --ticks 600 --change 200:demand_shift --change 350:seasonality_shift`
 
@@ -274,6 +276,6 @@ Or everything in containers: `docker compose up --build` (add `--profile monitor
 | `docs` | [Requirements coverage](docs/REQUIREMENTS_COVERAGE.md), [deliverables checklist](docs/DELIVERABLES.md), [finals demo runbook](docs/DEMO_RUNBOOK.md), architecture, benchmark, model, adaptation, tuning, load test, optional features |
 
 ## 6. Limitations (stated plainly)
-Training data is simulated (no real network data was available). Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan). One process caps at about 160 requests/s. The model needs a little history per station (24 observations) before it takes over from a moving average. Reinforcement learning, multi-agent control and Kubernetes were deliberately not built; the reasons are in [docs/OPTIONAL_FEATURES.md](docs/OPTIONAL_FEATURES.md).
+Training data is simulated (no real network data was available). Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan). One process caps at about 160 requests/s. The model needs a little history per station (24 observations) before it takes over from a moving average. Reinforcement learning, multi-agent control and autoscaling were deliberately not built; the reasons are in [docs/OPTIONAL_FEATURES.md](docs/OPTIONAL_FEATURES.md).
 
 Everything is simulated. No real fuel infrastructure is touched; secrets live in the untracked `.env`.
