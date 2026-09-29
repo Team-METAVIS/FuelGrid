@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Activity, AlertTriangle, BrainCircuit, ClipboardList, FlaskConical, Fuel, LayoutDashboard, Network, ScrollText, ServerCog, WifiOff } from "lucide-react";
+import { Activity, AlertTriangle, BrainCircuit, ClipboardList, FlaskConical, Fuel, History, LayoutDashboard, MessageSquare, Network, ScrollText, ServerCog, WifiOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useLive } from "../lib/live";
@@ -15,6 +15,8 @@ const NAV = [
   { group: "Intelligence", items: [
     { to: "/intelligence", label: "Forecast & Models", icon: BrainCircuit },
     { to: "/scenarios", label: "Scenarios & Chaos", icon: FlaskConical },
+    { to: "/assistant", label: "Ops assistant", icon: MessageSquare },
+    { to: "/replay", label: "Replay", icon: History },
   ] },
   { group: "Platform", items: [
     { to: "/system", label: "System health", icon: ServerCog },

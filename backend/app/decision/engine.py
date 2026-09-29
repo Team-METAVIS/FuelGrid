@@ -9,6 +9,8 @@ from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.repo import Repo
 from app.intelligence import planner
+from app.intelligence.memory import IncidentMemory, signature
+from app.intelligence.policies.common import precheck
 from app.intelligence.types import Plan, Recommendation
 from app.simulator import models as M
 from app.simulator.client import SimulatorClient
@@ -52,6 +54,9 @@ class DecisionEngine:
         self.last_cycle_ms = 0.0
         self.timeline: deque[dict] = deque(maxlen=600)
         self.fallbacks_in_row = 0
+        self.memory = IncidentMemory(repo, run_id)
+        self._tasks: set[asyncio.Task] = set()
+        self.refresh = None  # set by the runtime: async callable returning a fresh Snapshot
         self._inflight: asyncio.Task | None = None
         self.version = 0  # bumped on every decision change; the UI stream watches it
         self.bench = False  # benchmark runner drives cycles itself
@@ -77,6 +82,7 @@ class DecisionEngine:
     async def on_snapshot(self, snap: Snapshot):
         self._score_forecasts()
         self._record_timeline(snap)
+        self._emit("snapshot", tick=snap.tick, stale=snap.stale)
         if self.bench:
             return
         if self.paused or snap.tick - self.last_cycle_tick < self.cfg.decision_every_ticks and snap.tick >= self.last_cycle_tick:
@@ -199,6 +205,17 @@ class DecisionEngine:
         req = M.AllocationRequest(idempotency_key=self._key(d), source_depot_id=r.depot_id, destination_station_id=r.station_id,
                                   route_id=r.route_id, fuel_type=r.fuel, quantity=r.quantity)
         d.attempts += 1
+        if snap is not None:
+            bad = precheck(snap, r.depot_id, r.station_id, r.route_id, r.fuel, r.quantity)
+            if bad and self.refresh is not None and snap.age_s() > 1.0:
+                snap = await self.refresh() or snap  # the cached view may just be stale: re-read once before refusing
+                bad = precheck(snap, r.depot_id, r.station_id, r.route_id, r.fuel, r.quantity)
+            if bad:
+                d.status, d.result = "FAILED", f"PRECHECK_{bad[0]}"
+                self.repo.audit(self.run_id, "integration", f"Shipment #{d.id} blocked before sending: {bad[0]} ({bad[1]}); replanning", "warn", r.tick)
+                self._persist(d, snap)
+                self.last_cycle_tick = -999  # replan on the next snapshot
+                return
         try:
             a = await self.client.create_allocation(req)
             d.status, d.sim_allocation_id, d.result = "EXECUTED", a.id, a.status
@@ -232,8 +249,13 @@ class DecisionEngine:
             if d.status == "APPROVED" and d.attempts < 5:
                 await self._execute(d, snap)
 
+    def _emit(self, type_: str, **data):
+        if self.repo.bus is not None:
+            self.repo.bus.publish(type_, **data)
+
     def _persist(self, d: Decision, snap: Snapshot | None):
         self.version += 1
+        self._emit("decision", id=d.id, status=d.status, station=d.rec.station_id, fuel=d.rec.fuel, quantity=d.rec.quantity)
         r = d.rec
         self.repo.decision({
             "run_id": self.run_id, "tick": r.tick, "station_id": r.station_id, "fuel": r.fuel, "depot_id": r.depot_id,
@@ -277,20 +299,50 @@ class DecisionEngine:
     def mape(self) -> float | None:
         return sum(self.ape) / len(self.ape) if self.ape else None
 
+    @staticmethod
+    def _until(snap: Snapshot, key: str, ident: str) -> str:
+        ends = [e.end_tick for e in snap.events if e.status == "ACTIVE" and (ident in (e.parameters.get(key) or []))]
+        return f" (until tick {max(ends)})" if ends else ""
+
+    def _spawn(self, coro):
+        t = asyncio.create_task(coro)
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
+
+    async def _attach_similar(self, key: str, vec: list[float]):
+        similar = await self.memory.similar(vec)
+        if key in self.incidents:
+            self.incidents[key]["similar"] = similar
+            self.version += 1
+
+    def _remember(self, inc: dict, snap: Snapshot):
+        start = inc.get("since_tick", snap.tick)
+        mine = [d for d in self.decisions.values() if d.status == "EXECUTED" and start <= d.rec.tick <= snap.tick]
+        outcome = {
+            "duration_ticks": snap.tick - start,
+            "unmet_liters_during": round(max(0.0, snap.metrics.unmet_demand_liters - inc.get("_start_unmet", 0.0))),
+            "service_level_start": round(inc.get("_start_sl", 1.0), 4), "service_level_end": round(snap.metrics.service_level, 4),
+            "shipments": len(mine), "liters_shipped": round(sum(d.rec.quantity for d in mine)), "policy": self.cfg.active_policy,
+        }
+        summary = (f"{inc['message']}. Lasted {outcome['duration_ticks']} ticks; {outcome['shipments']} shipment(s) "
+                   f"({outcome['liters_shipped']:,} L) were dispatched; {outcome['unmet_liters_during']:,} L of demand went unmet meanwhile.")
+        if inc.get("_vec"):
+            self.memory.remember(inc["type"], inc["_vec"], start, snap.tick, summary, outcome)
+
     def _detect_incidents(self, snap: Snapshot, plan: Plan):
         now: dict[str, dict] = {}
         for e in snap.events:
-            if e.status == "ACTIVE":
+            if e.status == "ACTIVE" and e.type not in ("route_disruption", "station_outage", "depot_constraint"):  # those come from live status below
                 now[f"event-{e.id}"] = {"type": e.type, "severity": "high", "message": f"Active {e.type} until tick {e.end_tick}", "params": e.parameters}
         for r in snap.routes.values():
             if r.status != "AVAILABLE":
-                now[f"route-{r.id}"] = {"type": "route_disruption", "severity": "high", "message": f"Route {r.id} {r.status}"}
+                now[f"route-{r.id}"] = {"type": "route_disruption", "severity": "high", "message": f"Route {r.id} {r.status}{self._until(snap, 'route_ids', r.id)}"}
         for s in snap.stations.values():
             if s.status != "OPEN":
-                now[f"station-{s.id}"] = {"type": "station_outage", "severity": "high", "message": f"Station {s.name} {s.status}"}
+                now[f"station-{s.id}"] = {"type": "station_outage", "severity": "high", "message": f"Station {s.name} {s.status}{self._until(snap, 'station_ids', s.id)}"}
         for d in snap.depots.values():
             if d.status != "OPEN":
-                now[f"depot-{d.id}"] = {"type": "depot_constraint", "severity": "medium", "message": f"Depot {d.name} {d.status}"}
+                now[f"depot-{d.id}"] = {"type": "depot_constraint", "severity": "medium", "message": f"Depot {d.name} {d.status}{self._until(snap, 'depot_ids', d.id)}"}
         delayed = [a for a in snap.arrivals if a.status == "DELAYED"]
         if delayed:
             depots = sorted({a.depot_id.replace("depot-", "") for a in delayed})
@@ -304,15 +356,22 @@ class DecisionEngine:
         for sid, fuel, z, level in plan.anomalies:
             now[f"anomaly-{sid}-{fuel}"] = {"type": "demand_anomaly", "severity": "medium",
                                             "message": f"Demand anomaly at {sid} {fuel}: x{level:.2f} of baseline (z={z:.1f})"}
+        sl = snap.metrics.service_level
+        crit = sum(1 for r in plan.risks if r.severity == "CRITICAL") / 12
         for k, v in now.items():
-            if k not in self.incidents:
-                self.repo.audit(self.run_id, "alert", f"INCIDENT DETECTED: {v['message']}", "warn", snap.tick, v)
-                v["since_tick"] = snap.tick
+            prev = self.incidents.get(k)
+            if prev is None:
+                vec = signature(v["type"], snap.instance.sim_time.hour, sl, crit)
+                v.update(since_tick=snap.tick, _vec=vec, _start_unmet=snap.metrics.unmet_demand_liters, _start_sl=sl, similar=[])
+                self.repo.audit(self.run_id, "alert", f"INCIDENT DETECTED: {v['message']}", "warn", snap.tick, {k2: v2 for k2, v2 in v.items() if not k2.startswith("_")})
+                self._spawn(self._attach_similar(k, vec))
             else:
-                v["since_tick"] = self.incidents[k].get("since_tick", snap.tick)
+                for f in ("since_tick", "_vec", "_start_unmet", "_start_sl", "similar"):
+                    v[f] = prev.get(f)
         for k, v in self.incidents.items():
             if k not in now:
                 self.repo.audit(self.run_id, "recovery", f"RECOVERED: {v['message']}", "info", snap.tick)
+                self._remember(v, snap)
         self.incidents = now
 
     def _update_gauges(self, plan: Plan):

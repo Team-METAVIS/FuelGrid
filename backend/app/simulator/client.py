@@ -118,6 +118,9 @@ class SimulatorClient:
     async def instance(self) -> M.Instance:
         return await self._get("/v1/instance", M.Instance, name="instance", many=False)
 
+    async def regions(self) -> list[M.Region]:
+        return await self._get("/v1/regions", M.Region, name="regions")
+
     async def depots(self) -> list[M.Depot]:
         return await self._get("/v1/depots", M.Depot, name="depots")
 

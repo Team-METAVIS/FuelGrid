@@ -32,6 +32,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       AUTO_EXECUTE: ${AUTO_EXECUTE:-false}
       API_KEY: ${API_KEY:-}
+      # optional free-tier AI wording for the Ops assistant (Gemini first, Groq backup); works without
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
     ports: ["8080:8080"]
     restart: unless-stopped
 

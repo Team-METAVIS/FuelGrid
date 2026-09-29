@@ -135,3 +135,49 @@ recover. This was found (and fixed) through load testing; see `docs/LOAD_TEST.md
 * `docker compose --profile localdb up` provides a local Postgres if Supabase is not available.
 * CI (`.github/workflows/ci.yml`): lint, tests, type-check + frontend build, image build, container smoke test.
 * Build version (git SHA) is baked into the image and shown by `/api/health`.
+
+## Forecast v2 (why the numbers are more accurate)
+
+`seasonal-events-v2` = daily profile x region factor (`/v1/regions`) x announced event multiplier (`/v1/events`) x a
+learned residual. Because announced spikes (and their end) are already in the forecast, demand changes are anticipated
+instead of discovered a few steps late. A sustained residual well above 1 therefore means *unexplained* demand, which
+is what the anomaly detector reports. v1 stays in the registry for comparison and rollback.
+Measured on the same deterministic worlds: combined crisis error 7.5% to 6.0%; demand spike reached 100% service while
+shipping about 30% less fuel.
+
+## Constraint validator and lookahead
+
+Every shipment is checked locally against the simulator's exact validation order before it is sent (status, route
+maximum, depot stock, dispatch capacity, tank headroom). A shipment that would be rejected is never sent; the operator
+sees the exact reason and the system replans. Planning also excludes routes with an *announced* disruption covering the
+departure tick, so shipments are not sent onto a road that is about to close.
+
+## Event-driven core
+
+`app/core/events.py` is an in-process bus. The sync layer (snapshot, link degraded/recovered/reset), decision engine
+(every decision state change) and audit trail publish typed events; `/api/stream` subscribes and pushes them to the
+console over SSE, with replay of missed events after a reconnect (`Last-Event-ID`). Slow consumers lose their oldest
+events but can never block a publisher; the console treats events as hints and re-reads state over REST.
+
+## Incident memory (Supabase pgvector)
+
+Each incident becomes a 12-number signature (type, time of day, service level, share of critical stations). Resolved
+incidents are stored in `fg_incident_memory` (`vector(12)`, HNSW index, cosine distance) with their outcome (duration,
+shipments, liters, unmet demand). New incidents retrieve the closest past cases. If the database is down the same
+search runs in memory.
+
+## Operations assistant
+
+`/api/assistant` builds answers from live data (risks, recommendations and their reasons, incidents, comparison,
+health). Optional free-tier language models may only reword the answer: **Gemini first, Groq as backup** (`GEMINI_API_KEY`,
+`GROQ_API_KEY`). Available models are discovered from each provider's own API and ranked (free, fast, stable first);
+on a rate limit the model cools down and the next one is used, a bad key switches that provider off for 10 minutes, and
+if every model fails the grounded text is returned. A reply containing any number not present in the facts is rejected and
+the next model is tried. The assistant is read-only and works fully with no key (`app/intelligence/llm.py`).
+
+## Experiment tracking
+
+Benchmarks and parameter sweeps are recorded in `fg_experiments` and summarised in `docs/BENCHMARK.md` and
+`docs/TUNING.md`. The Forecast & Models page shows the model registry (activate/rollback), sweep results and history.
+
+See `docs/OPTIONAL_FEATURES.md` for the status of every optional item, including what was deliberately left out.

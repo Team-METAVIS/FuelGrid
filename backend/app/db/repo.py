@@ -31,6 +31,8 @@ class Repo:
         self.mem_audit: deque = deque(maxlen=500)  # served to the UI even when the DB is down
         self.mem_decisions: deque = deque(maxlen=500)
         self._task: asyncio.Task | None = None
+        self._pending = 0
+        self.bus = None  # optional EventBus: every audit entry is also published as an event
 
     async def start(self):
         if not self.url:
@@ -38,23 +40,47 @@ class Repo:
             return
         self.engine = create_async_engine(
             _async_url(self.url), pool_size=3, max_overflow=2, pool_pre_ping=True,
-            connect_args={"timeout": 8, "statement_cache_size": 0},
+            connect_args={"timeout": 15, "statement_cache_size": 0},
         )
         await self.migrate()
+        await self._warm()
         self._task = asyncio.create_task(self._writer())
 
-    async def migrate(self):
-        try:
-            async with self.engine.begin() as c:
+    async def _warm(self):
+        """Open the pool's connections now: a cold TLS connection to a remote database costs seconds."""
+        async def one():
+            try:
+                async with self.engine.connect() as c:
+                    await c.execute(text("select 1"))
+            except Exception:
+                pass
+        await asyncio.gather(*[one() for _ in range(3)])
+
+    async def migrate(self, attempts: int = 3):
+        """Apply each SQL file once (tracked in fg_migrations), each in its own transaction with a generous statement
+        timeout, retrying on transient trouble. A failed migration never stops the application from starting."""
+        for attempt in range(1, attempts + 1):
+            try:
+                async with self.engine.begin() as c:
+                    await c.execute(text("create table if not exists fg_migrations (name text primary key, applied_at timestamptz not null default now())"))
+                async with self.engine.connect() as c:
+                    done = {r[0] for r in (await c.execute(text("select name from fg_migrations"))).all()}
                 for f in sorted(MIGRATIONS.glob("*.sql")):
-                    lines = [ln for ln in f.read_text().splitlines() if not ln.strip().startswith("--")]
-                    sql = "\n".join(lines)
-                    for stmt in [s.strip() for s in sql.split(";") if s.strip()]:
-                        await c.execute(text(stmt))
-            self._set_up(True)
-        except Exception as e:
-            self._set_up(False)
-            log.error("db_migrate_failed", error=str(e)[:200])
+                    if f.name in done:
+                        continue
+                    lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if not ln.strip().startswith("--")]
+                    async with self.engine.begin() as c:
+                        await c.execute(text("set local statement_timeout = '60s'"))
+                        for stmt in [s.strip() for s in "\n".join(lines).split(";") if s.strip()]:
+                            await c.execute(text(stmt))
+                        await c.execute(text("insert into fg_migrations (name) values (:n) on conflict do nothing"), {"n": f.name})
+                    log.info("db_migration_applied", name=f.name)
+                self._set_up(True)
+                return
+            except Exception as e:
+                self._set_up(False)
+                log.error("db_migrate_failed", error=str(e)[:200], attempt=attempt)
+                await asyncio.sleep(2 * attempt)
 
     def _set_up(self, up: bool):
         if up != self.up:
@@ -69,18 +95,36 @@ class Repo:
             log.warning("db_queue_full_dropping")
 
     async def _writer(self):
+        """Drains the queue in batches: up to 100 statements share one transaction (one network round trip
+        instead of one per row). A failed batch is retried, then dropped with a log line; it never blocks the app."""
         while True:
-            sql, params = await self.q.get()
+            batch = [await self.q.get()]
+            self._pending = 1
+            while len(batch) < 100:
+                try:
+                    batch.append(self.q.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+            self._pending = len(batch)
             for attempt in range(3):
                 try:
                     async with self.engine.begin() as c:
-                        await c.execute(text(sql), params)
+                        for sql, params in batch:
+                            await c.execute(text(sql), params)
                     self._set_up(True)
                     break
                 except Exception as e:
                     self._set_up(False)
-                    log.warning("db_write_failed", error=str(e)[:160], attempt=attempt)
+                    log.warning("db_write_failed", error=str(e)[:160], attempt=attempt, batch=len(batch))
                     await asyncio.sleep(min(2 ** attempt, 5))
+            self._pending = 0
+
+    async def flush(self, timeout: float = 30.0) -> bool:
+        """Wait until everything queued has been written (used by batch jobs before they exit)."""
+        end = asyncio.get_event_loop().time() + timeout
+        while (not self.q.empty() or self._pending) and asyncio.get_event_loop().time() < end:
+            await asyncio.sleep(0.1)
+        return self.q.empty() and not self._pending
 
     async def ping(self) -> bool:
         if not self.engine:
@@ -105,6 +149,8 @@ class Repo:
         row = {"run_id": run_id, "tick": tick, "kind": kind, "severity": severity, "message": message,
                "payload": payload or {}}
         self.mem_audit.appendleft({**row, "created_at": _now()})
+        if self.bus is not None:
+            self.bus.publish("audit", kind=kind, severity=severity, message=message, tick=tick)
         self.enqueue(
             "insert into fg_audit (run_id,tick,kind,severity,message,payload) values (:run_id,:tick,:kind,:severity,:message,cast(:payload as jsonb))",
             {**row, "payload": json.dumps(row["payload"], default=str)},

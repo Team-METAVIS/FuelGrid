@@ -28,6 +28,12 @@ class Instance(_M):
     status: str
 
 
+class Region(_M):
+    id: str
+    name: str
+    demand_factor: float = Field(gt=0)
+
+
 class Depot(_M):
     id: str
     name: str

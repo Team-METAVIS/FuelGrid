@@ -8,12 +8,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app.api.extras import router as extras_router
 from app.api.routes import router
 from app.core.apistats import ApiStats, StatsMiddleware
 from app.core.config import Settings, get_settings
+from app.core.events import EventBus
 from app.core.logging import get_logger, setup_logging
 from app.db.repo import Repo
 from app.decision.engine import DecisionEngine
+from app.intelligence.llm import LlmRouter
 from app.simulator.client import SimulatorClient
 from app.state.store import StateStore
 from app.state.sync import Synchronizer
@@ -32,16 +35,23 @@ class Runtime:
     engine: DecisionEngine
     api_stats: ApiStats
     run_id: str
+    bus: EventBus
+    llm: LlmRouter
 
 
 def build_runtime(cfg: Settings, api_stats: ApiStats) -> Runtime:
     run_id = time.strftime("%m%d%H%M%S")
     client, store, repo = SimulatorClient(cfg), StateStore(), Repo(cfg.database_url)
+    bus = EventBus()
+    repo.bus = bus
     sync = Synchronizer(client, store)
+    sync.bus = bus
     engine = DecisionEngine(cfg, store, client, repo, run_id)
     sync.on_snapshot.append(engine.on_snapshot)
     sync.on_reset.append(engine.reset)
-    return Runtime(cfg, client, store, sync, repo, engine, api_stats, run_id)
+    engine.refresh = sync.refresh
+    llm = LlmRouter(cfg.gemini_api_key, cfg.groq_api_key, cfg.llm_timeout_s)
+    return Runtime(cfg, client, store, sync, repo, engine, api_stats, run_id, bus, llm)
 
 
 def create_app(cfg: Settings | None = None, start_background: bool = True) -> FastAPI:
@@ -55,6 +65,7 @@ def create_app(cfg: Settings | None = None, start_background: bool = True) -> Fa
         app.state.rt = rt
         if start_background:
             await rt.repo.start()
+            await rt.engine.memory.load()
             rt.repo.audit(rt.run_id, "integration", "FuelGrid started", "info", None, {"policy": cfg.active_policy})
             rt.sync.start()
         log.info("started", run_id=rt.run_id, sim=cfg.sim_base_url, db=bool(cfg.database_url))
@@ -66,6 +77,7 @@ def create_app(cfg: Settings | None = None, start_background: bool = True) -> Fa
     app.add_middleware(StatsMiddleware, stats=stats)
     Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app, include_in_schema=False)
     app.include_router(router)
+    app.include_router(extras_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz():

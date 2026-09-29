@@ -25,6 +25,7 @@ class Synchronizer:
         self.consecutive_failures = 0
         self.on_snapshot: list[Callable[[Snapshot], Awaitable[None]]] = []
         self.on_reset: list[Callable[[], None]] = []
+        self.bus = None  # optional EventBus
         self._tasks: list[asyncio.Task] = []
         self.warm = False
         self.last_tick = -1
@@ -44,10 +45,14 @@ class Synchronizer:
                 c.instance(), c.depots(), c.stations(), c.routes(), c.supply_arrivals(), c.events(),
                 c.allocations(), c.metrics(),
             )
+            if not self.store.regions:
+                self.store.regions = {r.id: r.demand_factor for r in await c.regions()}
             if self.warm and inst.tick < self.last_tick:  # tick went backwards => simulator was reset
                 log.warning("simulator_reset_detected", from_tick=self.last_tick, to_tick=inst.tick)
                 self.store.clear()
                 self.warm = False
+                if self.bus is not None:
+                    self.bus.publish("sim.reset", from_tick=self.last_tick, to_tick=inst.tick)
                 for cb in self.on_reset:
                     cb()
             # one call for all stations: 12 rows/tick; fetch just the gap since the last seen tick
@@ -59,6 +64,8 @@ class Synchronizer:
         except SimulatorError as e:
             self.consecutive_failures += 1
             self.last_error = str(e)
+            if self.consecutive_failures == 1 and self.bus is not None:
+                self.bus.publish("sim.degraded", error=str(e)[:120])
             m.DEGRADED.set(1)
             if self.store.snapshot:
                 self.store.snapshot.stale = True
@@ -72,6 +79,8 @@ class Synchronizer:
         self.store.snapshot = snap
         if self.consecutive_failures:
             log.info("sync_recovered", after_failures=self.consecutive_failures)
+            if self.bus is not None:
+                self.bus.publish("sim.recovered", after_failures=self.consecutive_failures)
         self.consecutive_failures, self.last_error = 0, None
         m.DEGRADED.set(1 if snap.stale else 0)
         m.TICK.set(snap.tick)

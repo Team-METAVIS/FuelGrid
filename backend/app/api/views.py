@@ -93,7 +93,7 @@ def _build_body(rt, snap) -> dict:
         "demand": demand,
         "risks": risks,
         "recommendations": [d.to_dict() for d in eng.decisions.values() if d.status == "PROPOSED"],
-        "incidents": [{"key": k, **v} for k, v in eng.incidents.items()],
+        "incidents": [{"key": k, **{a: b for a, b in v.items() if not a.startswith("_")}} for k, v in eng.incidents.items()],
         "plan": {"policy": plan.policy, "solver_status": plan.solver_status, "runtime_ms": round(plan.runtime_ms, 1),
                  "fallback_used": plan.fallback_used, "fallback_reason": plan.fallback_reason, "tick": plan.tick,
                  "notes": plan.notes, "forecast_model": plan.forecast_model, "comparison": plan.comparison} if plan else None,

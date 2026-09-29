@@ -28,15 +28,21 @@ class Settings(BaseSettings):
 
     # policy
     horizon_ticks: int = 32  # forecast & risk horizon (8h)
-    target_cover_ticks: int = 24  # want ~6h cover after delivery
+    target_cover_ticks: int = 32  # tuned by sweep (docs/TUNING_COMBOS.md): 24 -> 32 raised service level on hard scenarios
     critical_cover_ticks: int = 8  # <2h projected => critical
     depot_reserve_frac: float = 0.10
+    safety_z: float = 2.0  # safety buffer in standard deviations of forecast error; tuned by sweep (was 1.28)
     active_policy: str = "optimizer"
     forecaster: str = "seasonal"
     optimizer_timeout_s: float = 2.0
     policy_rolled_back: bool = False  # set when repeated optimizer failures forced the rule-based policy
     rollback_after: int = 3  # consecutive fallback cycles before automatic rollback
     drift_mape: float = 0.25  # rolling forecast error above this raises a model-drift incident
+
+    # optional free-tier language models that may reword assistant answers (never decide). Gemini first, Groq as backup.
+    gemini_api_key: str | None = Field(default=None, validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY"))
+    groq_api_key: str | None = None
+    llm_timeout_s: float = 8.0
 
     log_level: str = "INFO"
     api_key: str | None = None  # optional operator API key for write endpoints

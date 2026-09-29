@@ -8,15 +8,19 @@ import { useLive } from "../lib/live";
 const POLICY_COLOR: Record<string, string> = { none: "#cbd5e1", rules: "#0ea5e9", optimizer: "#4f46e5" };
 
 export default function Intelligence() {
-  const { state: s } = useLive();
+  const { state: s, act } = useLive();
   const [sid, setSid] = useState("station-mirpur");
   const [fuel, setFuel] = useState("DIESEL");
   const [fc, setFc] = useState<any>(null);
   const [bench, setBench] = useState<any>(null);
   const [scn, setScn] = useState("combined_crisis");
+  const [models, setModels] = useState<any>(null);
+  const [exps, setExps] = useState<any[]>([]);
+  const [tuning, setTuning] = useState<any>(null);
   const tick = s?.instance.tick;
 
-  useEffect(() => { get("/api/benchmarks").then(setBench).catch(() => undefined); }, []);
+  useEffect(() => { get("/api/benchmarks").then(setBench).catch(() => undefined); get("/api/experiments").then(setExps).catch(() => undefined); get("/api/tuning").then(setTuning).catch(() => undefined); }, []);
+  useEffect(() => { get("/api/models").then(setModels).catch(() => undefined); }, [s?.settings.forecaster, s?.settings.policy]);
   useEffect(() => { get(`/api/forecast?station_id=${sid}&fuel=${fuel}`).then(setFc).catch(() => setFc(null)); }, [sid, fuel, tick]);
   if (!s) return null;
 
@@ -113,6 +117,56 @@ export default function Intelligence() {
           )}
         </Card>
       </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <Card title="Model registry" subtitle="Versioned forecasters and policies; switching is instant and audited">
+          {!models ? <Empty title="Loading…" /> : (
+            <div className="space-y-4">
+              {[["Forecasters", "forecasters", "forecaster"], ["Decision policies", "policies", "policy"]].map(([label, key, field]) => (
+                <div key={key}>
+                  <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-400">{label}</div>
+                  <ul className="space-y-1.5">
+                    {models[key].map((m: any) => (
+                      <li key={m.key} className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${m.active ? "border-brand-500 bg-brand-50/50" : "border-slate-200"}`}>
+                        <div><div className="text-[13px] font-medium text-slate-900">{m.title} {m.version && <span className="ml-1 font-mono text-[11px] text-slate-400">{m.version}</span>}</div><div className="text-xs text-slate-500">{m.description}</div></div>
+                        {m.active ? <Badge tone="indigo">active</Badge> : <button onClick={() => act("/api/settings", { [field as string]: m.key }, `${m.title} activated`)} className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">Activate</button>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 border-t border-slate-100 pt-3 text-xs sm:grid-cols-3">
+                {Object.entries(models.parameters).map(([k, v]) => <div key={k}><div className="text-slate-500">{k.replace(/_/g, " ")}</div><div className="tabular font-medium text-slate-800">{String(v)}</div></div>)}
+              </div>
+            </div>
+          )}
+        </Card>
+
+        <Card title="Tuning sweep" subtitle="Optimizer on the hardest scenarios, one setting changed at a time (docs/TUNING.md)" pad={false}>
+          {!tuning || !tuning.rows?.length ? <Empty title="No sweep results yet" text="python -m app.scenarios.sweep" /> : (
+            <div className="overflow-x-auto"><table className="w-full">
+              <thead><tr><Th>Setting</Th>{Object.keys(tuning.rows[0].per).map((sc) => <Th key={sc} right>{title(sc)}</Th>)}<Th right>Shipped L</Th></tr></thead>
+              <tbody>{tuning.rows.map((r: any) => (
+                <tr key={r.label} className="hover:bg-slate-50">
+                  <Td className="max-w-56 truncate">{r.label}</Td>
+                  {Object.values(r.per).map((p: any, i: number) => <Td key={i} right className="font-medium">{pct(p.service_level, 2)}</Td>)}
+                  <Td right>{n0(Object.values(r.per).reduce((a: number, p: any) => a + p.allocated_l, 0) as number)}</Td>
+                </tr>))}</tbody></table></div>
+          )}
+        </Card>
+      </div>
+
+      <Card className="mt-4" title="Experiment history" subtitle="Every benchmark and sweep run is recorded in Supabase" pad={false}>
+        {exps.length === 0 ? <Empty title="No experiments recorded" /> : (
+          <div className="max-h-80 overflow-auto"><table className="w-full">
+            <thead><tr><Th>When</Th><Th>Run</Th><Th>Policy</Th><Th>Model</Th><Th right>Service</Th><Th right>Unmet L</Th><Th right>Forecast error</Th></tr></thead>
+            <tbody>{exps.slice(0, 40).map((e, i) => (
+              <tr key={i} className="hover:bg-slate-50">
+                <Td>{String(e.created_at).slice(5, 16)}</Td><Td className="max-w-64 truncate">{e.name}</Td><Td>{e.policy}</Td><Td>{e.model_version}</Td>
+                <Td right className="font-medium">{e.metrics?.service_level != null ? pct(e.metrics.service_level, 2) : "—"}</Td><Td right>{n0(e.metrics?.unmet_l)}</Td><Td right>{e.metrics?.forecast_mape != null ? pct(e.metrics.forecast_mape, 1) : "—"}</Td>
+              </tr>))}</tbody></table></div>
+        )}
+      </Card>
 
       <Card className="mt-4" title="Shortage risk by station and fuel" subtitle="Stockout probability over the next 8 hours, with the signals that drove each score" pad={false}>
         <div className="overflow-x-auto">

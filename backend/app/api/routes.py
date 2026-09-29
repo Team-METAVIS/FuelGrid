@@ -98,8 +98,8 @@ async def settings(body: SettingsIn, r=Depends(rt)):
             c.policy_rolled_back = False
             r.engine.fallbacks_in_row = 0
     if body.forecaster is not None:
-        if body.forecaster not in ("seasonal", "moving_avg"):
-            raise HTTPException(422, "forecaster must be seasonal|moving_avg")
+        if body.forecaster not in ("seasonal", "seasonal_v1", "moving_avg"):
+            raise HTTPException(422, "forecaster must be seasonal|seasonal_v1|moving_avg")
         c.forecaster = body.forecaster
     if body.paused is not None:
         r.engine.paused = body.paused
@@ -182,19 +182,35 @@ async def clear_faults(r=Depends(rt)):
 
 @router.get("/stream")
 async def stream(request: Request, r=Depends(rt)):
-    """UI push: emit a tiny 'update' hint on every cycle/snapshot; the UI then re-GETs /api/state."""
+    """Live push: every domain event (snapshot, decision change, audit entry, sim degraded/recovered/reset) as SSE.
+    Events are hints; the UI re-reads state over REST. Reconnecting clients replay what they missed (Last-Event-ID)."""
+    q = r.bus.subscribe()
+    try:
+        last_id = int(request.headers.get("last-event-id", "0"))
+    except ValueError:
+        last_id = 0
+
     async def gen():
-        last = None
-        while True:
-            if await request.is_disconnected():
-                break
-            snap = r.store.snapshot
-            marker = (snap.tick, snap.fetched_at, snap.stale, r.engine.version) if snap else None
-            if marker != last:
-                last = marker
-                yield {"event": "update", "data": json.dumps({"tick": snap.tick if snap else None})}
-            await asyncio.sleep(0.5)
+        try:
+            yield {"event": "hello", "data": json.dumps({"seq": r.bus.seq})}
+            for e in r.bus.since(last_id):
+                yield {"id": str(e["id"]), "data": json.dumps(e)}
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    e = await asyncio.wait_for(q.get(), timeout=10)
+                except TimeoutError:
+                    continue  # sse-starlette sends keepalive pings
+                yield {"id": str(e["id"]), "data": json.dumps(e)}
+        finally:
+            r.bus.unsubscribe(q)
     return EventSourceResponse(gen(), ping=15)
+
+
+@router.get("/events")
+async def recent_events(limit: int = 50, r=Depends(rt)):
+    return [e for e in list(r.bus.recent) if e["type"] != "snapshot"][-limit:][::-1]
 
 
 @router.get("/briefing")

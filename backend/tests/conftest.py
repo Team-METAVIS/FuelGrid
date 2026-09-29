@@ -28,7 +28,7 @@ ROUTES = [
 ]
 
 
-def make_snapshot(tick=0, station_inv=None, route_status=None, allocations=None, hour=0) -> Snapshot:
+def make_snapshot(tick=0, station_inv=None, route_status=None, allocations=None, hour=0, events=None) -> Snapshot:
     depots = {k: M.Depot(id=k, name=k, region_id=r, status="OPEN", dispatch_capacity_per_tick=dc,
                          capacity=dict(zip(FUEL, cap, strict=True)), inventory=dict(zip(FUEL, inv, strict=True)))
               for k, (r, dc, cap, inv) in DEPOTS.items()}
@@ -40,7 +40,7 @@ def make_snapshot(tick=0, station_inv=None, route_status=None, allocations=None,
     routes = {i: M.Route(id=i, source_depot_id=d, destination_station_id=s, transit_ticks=t, max_shipment=mx,
                          status=(route_status or {}).get(i, "AVAILABLE")) for i, d, s, t, mx in ROUTES}
     inst = M.Instance(id=1, scenario_id="t", seed=1, sim_time=datetime(2026, 1, 1, hour), tick=tick, tick_minutes=15, status="PAUSED")
-    return Snapshot(inst, depots, stations, routes, [], [], allocations or [],
+    return Snapshot(inst, depots, stations, routes, [], events or [], allocations or [],
                     M.Metrics(served_demand_liters=0, unmet_demand_liters=0, service_level=1, allocation_liters=0, allocation_failures=0))
 
 
@@ -52,3 +52,13 @@ def cfg():
 @pytest.fixture
 def store():
     return StateStore()
+
+
+def spike(start, end, multiplier=2.0, region="region-dhaka", status="ACTIVE", eid=1):
+    return M.SimEvent(id=eid, type="demand_spike", start_tick=start, end_tick=end, status=status,
+                      parameters={"region_ids": [region], "multiplier": multiplier})
+
+
+def disruption(start, end, routes, eid=2):
+    return M.SimEvent(id=eid, type="route_disruption", start_tick=start, end_tick=end, status="SCHEDULED",
+                      parameters={"route_ids": routes})

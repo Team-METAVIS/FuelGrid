@@ -9,7 +9,7 @@ import { fuelColor, hours, liters, n0, pct, shortId, title } from "../lib/format
 import { useLive } from "../lib/live";
 
 export default function Overview() {
-  const { state: s, timeline, approveAll } = useLive();
+  const { state: s, timeline, approveAll, feed } = useLive();
   const [brief, setBrief] = useState<any>(null);
   const tick = s?.instance.tick;
   const pend = s?.recommendations.length;
@@ -37,7 +37,7 @@ export default function Overview() {
       <PageHeader title="Operations overview" description="Live view of the simulated national fuel network — observe, predict, decide." />
 
       {brief && (
-        <Card className="mb-4" title={<span className="flex items-center gap-2"><Sparkles size={14} className="text-brand-600" />Situation briefing</span>} subtitle="Written automatically from live data � nothing here is invented">
+        <Card className="mb-4" title={<span className="flex items-center gap-2"><Sparkles size={14} className="text-brand-600" />Situation briefing</span>} subtitle="Written automatically from live data — nothing here is invented">
           <div className={`mb-2 text-base font-semibold ${brief.tone === "bad" ? "text-rose-600" : brief.tone === "warn" ? "text-amber-600" : "text-emerald-600"}`}>{brief.headline}</div>
           <ul className="space-y-1.5 text-[13px] text-slate-700">
             {brief.points.map((p: any, i: number) => <li key={i} className="flex gap-2"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" />{p.text}</li>)}
@@ -129,12 +129,31 @@ export default function Overview() {
                 <li key={i.key} className="px-5 py-3">
                   <div className="flex items-center gap-2"><Badge tone={i.severity === "high" ? "red" : "amber"}>{title(i.type)}</Badge><span className="text-[11px] text-slate-400">since tick {i.since_tick}</span></div>
                   <div className="mt-1 text-xs text-slate-600">{i.message}</div>
+                  {(i as any).similar?.length > 0 && (
+                    <div className="mt-1.5 rounded-md bg-indigo-50 px-2.5 py-1.5 text-[11px] text-indigo-800 ring-1 ring-inset ring-indigo-100">
+                      <b>Seen before ({Math.round((i as any).similar[0].similarity * 100)}% similar):</b> {(i as any).similar[0].summary}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </Card>
       </div>
+
+      <Card className="mt-4" title="Live activity" subtitle="Pushed from the server the moment something happens" pad={false}>
+        {feed.length === 0 ? <Empty title="Waiting for activity…" text="Decisions, alerts, recoveries and link changes appear here as they happen." /> : (
+          <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto">
+            {feed.slice(0, 12).map((e: any) => (
+              <li key={e.id} className="flex items-center gap-3 px-5 py-2 text-xs">
+                <span className="tabular w-16 shrink-0 text-slate-400">{new Date(e.ts * 1000).toLocaleTimeString([], { hour12: false })}</span>
+                <Badge tone={e.type === "decision" ? "indigo" : e.type.startsWith("sim") ? "amber" : "slate"}>{e.type}</Badge>
+                <span className="truncate text-slate-700">{e.type === "audit" ? e.data.message : e.type === "decision" ? `#${e.data.id} ${e.data.status.toLowerCase()} · ${e.data.fuel.toLowerCase()} to ${shortId(e.data.station)} · ${liters(e.data.quantity)}` : JSON.stringify(e.data)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
 
       <Card
         className="mt-4"

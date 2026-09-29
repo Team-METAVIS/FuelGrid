@@ -50,6 +50,7 @@ class StateStore:
 
     def __init__(self):
         self.snapshot: Snapshot | None = None
+        self.regions: dict[str, float] = {}  # region id -> demand factor (static world data, fetched once)
         # (station, fuel) -> {tick: (demand, served, unmet, sim_time)}
         self.demand: dict[tuple[str, str], dict[int, tuple[float, float, float, object]]] = defaultdict(dict)
         self._order: dict[tuple[str, str], list[int]] = defaultdict(list)  # sorted ticks per series

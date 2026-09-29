@@ -123,3 +123,14 @@ async def test_briefing_is_plain_language(eng):
     b = briefing.build(rt)
     assert b["headline"] and b["points"]
     assert any("waiting for your approval" in p["text"] for p in b["points"])
+
+
+async def test_doomed_shipment_is_blocked_before_sending(eng):
+    await eng.cycle()
+    did = next(iter(pending(eng)))
+    d = eng.decisions[did]
+    eng.store.snapshot.depots[d.rec.depot_id].inventory[d.rec.fuel] = 0  # stock vanished after the plan
+    res = await eng.approve(did)
+    assert res.status == "FAILED" and res.result.startswith("PRECHECK_")
+    assert eng.client.calls == [], "nothing may be sent to the simulator"
+    assert eng.last_cycle_tick == -999  # forces an immediate replan

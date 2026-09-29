@@ -20,16 +20,53 @@ class Need:
     severity: str
 
 
+def route_blocked_at(snap: Snapshot, route_id: str, tick: int) -> bool:
+    """True if an announced route_disruption covers `tick` (a shipment that departs then would FAIL)."""
+    for e in snap.events:
+        if e.type == "route_disruption" and e.start_tick <= tick < e.end_tick:
+            ids = e.parameters.get("route_ids") or []
+            if not ids or route_id in ids:
+                return True
+    return False
+
+
 def usable_routes(snap: Snapshot):
-    """Routes that the simulator would accept right now (status checks from the validation order)."""
+    """Routes the simulator would accept for a shipment created now (it departs next tick).
+    Uses live status plus announced disruptions, so we do not ship into a road that is about to close."""
     out = []
+    depart = snap.tick + 1
     for r in snap.routes.values():
         d, s = snap.depots.get(r.source_depot_id), snap.stations.get(r.destination_station_id)
         if not d or not s:
             continue
-        if r.status == "AVAILABLE" and s.status == "OPEN" and d.status in ("OPEN", "CONSTRAINED"):
+        if r.status == "AVAILABLE" and s.status == "OPEN" and d.status in ("OPEN", "CONSTRAINED") and not route_blocked_at(snap, r.id, depart):
             out.append(r)
     return out
+
+
+def precheck(snap: Snapshot, depot_id: str, station_id: str, route_id: str, fuel: str, qty: float) -> tuple[str, str] | None:
+    """Mirror of the simulator's validation order (guide section 5.2). Returns (code, message) or None if valid.
+    Catching these locally avoids a rejected call and gives the operator a precise reason."""
+    r, d, s = snap.routes.get(route_id), snap.depots.get(depot_id), snap.stations.get(station_id)
+    if not r or not d or not s:
+        return "NOT_FOUND", "unknown depot, station or route"
+    if r.source_depot_id != depot_id or r.destination_station_id != station_id:
+        return "ROUTE_MISMATCH", "route does not connect this depot and station"
+    if d.status not in ("OPEN", "CONSTRAINED"):
+        return "DEPOT_CLOSED", f"depot is {d.status}"
+    if s.status != "OPEN":
+        return "STATION_CLOSED", f"station is {s.status}"
+    if r.status != "AVAILABLE" or route_blocked_at(snap, route_id, snap.tick + 1):
+        return "ROUTE_DISRUPTED", "route is disrupted or about to be"
+    if qty > r.max_shipment:
+        return "ROUTE_CAPACITY_EXCEEDED", f"{qty:,.0f} L exceeds the route maximum of {r.max_shipment:,.0f} L"
+    if d.inventory.get(fuel, 0.0) < qty:
+        return "INSUFFICIENT_INVENTORY", f"depot holds {d.inventory.get(fuel, 0.0):,.0f} L"
+    if dispatch_remaining(snap).get(depot_id, 0.0) < qty:
+        return "DISPATCH_CAPACITY_EXCEEDED", "depot dispatch capacity for this tick is used up"
+    if s.inventory.get(fuel, 0.0) + qty > s.capacity.get(fuel, 0.0):
+        return "DESTINATION_CAPACITY_EXCEEDED", "station tank would overflow"
+    return None
 
 
 def dispatch_remaining(snap: Snapshot) -> dict[str, float]:
@@ -59,7 +96,7 @@ def compute_needs(snap: Snapshot, forecasts: dict[tuple[str, str], Forecast], ri
         cover = cfg.target_cover_ticks
         window = f.per_tick[eta:eta + cover] or f.per_tick[-cover:]
         dem = sum(window)
-        safety = 1.28 * f.sigma_rel * dem  # ~P90 buffer (uncertainty-aware)
+        safety = cfg.safety_z * f.sigma_rel * dem  # uncertainty-aware buffer (z=1.28 ~ P90)
         later = sum(q for t, q in arr.items() if snap.tick + eta < t <= snap.tick + eta + cover)
         need = max(0.0, dem + safety - inv_eta - later)
         headroom = max(0.0, min(cap - inv_eta - later, cap - st.inventory.get(fuel, 0.0)))

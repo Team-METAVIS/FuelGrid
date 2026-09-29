@@ -14,3 +14,6 @@ loadtest/results/*_exceptions.csv
 loadtest/results/*_failures.csv
 loadtest/results/run*
 loadtest/results/DONE
+sweep.log
+bench4*.log
+sweep2.log

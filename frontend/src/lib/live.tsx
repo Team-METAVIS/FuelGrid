@@ -9,7 +9,7 @@ interface Live {
   state: State | null; decisions: Decision[]; audit: any[]; timeline: any[]; connected: boolean;
   refresh: () => Promise<void>; decide: (id: number, action: "approve" | "reject", label: string) => Promise<void>;
   approveAll: () => Promise<void>; act: (url: string, body?: unknown, okText?: string) => Promise<any>;
-  toasts: Toast[];
+  toasts: Toast[]; feed: any[]; streaming: boolean;
 }
 const Ctx = createContext<Live>(null as unknown as Live);
 export const useLive = () => useContext(Ctx);
@@ -21,6 +21,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [timeline, setTimeline] = useState<any[]>([]);
   const [connected, setConnected] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [feed, setFeed] = useState<any[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const seen = useRef<Set<number>>(new Set());
   const busy = useRef(false);
   const queued = useRef(false);
   const hidden = useRef<Set<number>>(new Set());
@@ -50,6 +53,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const toastRef = useRef<(k: "ok" | "err", t: string) => void>(() => undefined);
+  const pushToast = (k: "ok" | "err", t: string) => toastRef.current(k, t);
+
   useEffect(() => {
     refresh();
     let es: EventSource | null = null;
@@ -60,8 +66,25 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     };
     const connect = () => {
       es = new EventSource("/api/stream");
-      es.addEventListener("update", schedule);
-      es.onerror = () => { es?.close(); setTimeout(connect, 2000); };
+      es.addEventListener("hello", () => setStreaming(true));
+      es.onmessage = (m) => {
+        try {
+          const e = JSON.parse(m.data);
+          if (seen.current.has(e.id)) return; // reconnect replay can repeat events
+          seen.current.add(e.id);
+          if (e.type !== "snapshot") {
+            setFeed((f) => [e, ...f].slice(0, 40));
+            const d = e.data ?? {};
+            if (e.type === "audit" && (d.severity === "warn" || d.severity === "error") && ["alert", "recovery", "fallback"].includes(d.kind)) {
+              pushToast(d.kind === "recovery" ? "ok" : "err", d.message);
+            }
+            if (e.type === "sim.degraded") pushToast("err", "Simulator link degraded — using cached data");
+            if (e.type === "sim.recovered") pushToast("ok", "Simulator link recovered");
+          }
+        } catch { /* ignore malformed event */ }
+        schedule();
+      };
+      es.onerror = () => { setStreaming(false); es?.close(); setTimeout(connect, 2000); };
     };
     connect();
     const poll = window.setInterval(refresh, 5000);
@@ -73,6 +96,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     setToasts((t) => [...t, { id, kind, text }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
   }, []);
+
+  toastRef.current = toast;
 
   const act = useCallback(async (url: string, body?: unknown, okText = "Done") => {
     try {
@@ -119,8 +144,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [state, refresh, toast]);
 
   const value = useMemo(
-    () => ({ state, decisions, audit, timeline, connected, refresh, decide, approveAll, act, toasts }),
-    [state, decisions, audit, timeline, connected, refresh, decide, approveAll, act, toasts],
+    () => ({ state, decisions, audit, timeline, connected, refresh, decide, approveAll, act, toasts, feed, streaming }),
+    [state, decisions, audit, timeline, connected, refresh, decide, approveAll, act, toasts, feed, streaming],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
