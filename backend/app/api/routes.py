@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import views
@@ -33,7 +33,7 @@ async def health(r=Depends(rt)):
 
 
 @router.get("/decisions")
-async def decisions(limit: int = 100, r=Depends(rt)):
+async def decisions(limit: int = Query(100, ge=1, le=1000), r=Depends(rt)):
     ids = list(r.engine.history)[-limit:][::-1]
     return [r.engine.decisions[i].to_dict() for i in ids if i in r.engine.decisions]
 
@@ -68,7 +68,7 @@ async def approve_all(r=Depends(rt)):
 
 
 @router.get("/audit")
-async def audit(limit: int = 100, r=Depends(rt)):
+async def audit(limit: int = Query(100, ge=1, le=1000), r=Depends(rt)):
     if r.repo.up:
         try:
             return await r.repo.fetch("select created_at,tick,kind,severity,message from fg_audit order by id desc limit :n", {"n": limit})
@@ -122,7 +122,7 @@ async def cycle_now(r=Depends(rt)):
 class EventIn(BaseModel):
     type: str
     start_tick: int | None = None
-    duration_ticks: int = 12
+    duration_ticks: int = Field(12, ge=1, le=10_000)
     parameters: dict = {}
 
 
@@ -144,7 +144,7 @@ async def _admin(r, method, path, body=None):
 
 
 class ClockIn(BaseModel):
-    speed: float = 2.0
+    speed: float = Field(2.0, gt=0, le=100)
 
 
 @router.post("/sim/clock/start", dependencies=[Depends(guard)])
@@ -242,7 +242,7 @@ async def stream(request: Request, r=Depends(rt)):
 
 
 @router.get("/events")
-async def recent_events(limit: int = 50, r=Depends(rt)):
+async def recent_events(limit: int = Query(50, ge=1, le=1000), r=Depends(rt)):
     return [e for e in list(r.bus.recent) if e["type"] != "snapshot"][-limit:][::-1]
 
 

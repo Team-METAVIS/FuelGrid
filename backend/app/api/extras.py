@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.feed import guard
@@ -156,7 +156,7 @@ async def models(r=Depends(rt)):
 
 
 @router.get("/experiments")
-async def experiments(limit: int = 60, r=Depends(rt)):
+async def experiments(limit: int = Query(60, ge=1, le=1000), r=Depends(rt)):
     if not r.repo.up:
         return []
     rows = await r.repo.fetch("select created_at, name, policy, forecaster, model_version, scenario, metrics from fg_experiments order by id desc limit :n", {"n": limit})

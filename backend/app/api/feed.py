@@ -4,7 +4,7 @@ Point any real system at /api/feed/* and FuelGrid runs on it; nothing here is si
 import asyncio
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.adapters.feed import Ack, TelemetryIn, TopologyIn
 
@@ -91,13 +91,13 @@ async def switch(body: SourceIn, r=Depends(rt)):
 # ------------------------------------------------------------------------------------------------ built-in independent world
 class DemoStart(BaseModel):
     seed: int = 7
-    speed: float = 4.0  # ticks per second
+    speed: float = Field(4.0, gt=0, le=100)  # ticks per second
 
 
 class DemoChange(BaseModel):
     kind: str  # demand_shift | demand_shock | sensor_dropout | road_closure | new_station | capacity_change
-    magnitude: float = 1.4
-    duration_ticks: int = 24
+    magnitude: float = Field(1.4, gt=0, le=10)  # multiplier: 0 or below would zero or negate demand
+    duration_ticks: int = Field(24, ge=1, le=10_000)
 
 
 @router.post("/feed/demo/start", dependencies=[Depends(guard)])

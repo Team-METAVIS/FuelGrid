@@ -98,3 +98,17 @@ def test_write_endpoints_require_key_when_configured():
         assert c.post("/api/settings", json={"paused": True}).status_code == 401
         assert c.post("/api/settings", json={"paused": True}, headers={"X-API-Key": "secret"}).status_code == 200
         assert c.get("/api/state").status_code == 200  # reads stay open
+
+
+def test_list_limits_are_validated(api):
+    client, _ = api
+    for path in ("/api/decisions", "/api/audit", "/api/events"):
+        assert client.get(f"{path}?limit=0").status_code == 422
+        assert client.get(f"{path}?limit=-5").status_code == 422
+        assert client.get(f"{path}?limit=5").status_code == 200
+
+
+def test_demo_change_rejects_non_positive_magnitude(api):
+    client, _ = api
+    r = client.post("/api/feed/demo/change", json={"kind": "demand_shift", "magnitude": 0})
+    assert r.status_code == 422

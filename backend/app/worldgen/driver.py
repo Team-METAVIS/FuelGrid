@@ -60,9 +60,13 @@ class DemoWorld:
 
     async def stop(self) -> None:
         self.running = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
+        task, self._task = self._task, None
+        if task:
+            task.cancel()
+            try:  # wait for an in-flight tick so it cannot write into the fresh network start() builds next
+                await task
+            except asyncio.CancelledError:
+                pass
 
     def status(self) -> dict:
         w = self.world
