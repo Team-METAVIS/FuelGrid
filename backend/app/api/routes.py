@@ -152,7 +152,10 @@ async def clock_start(body: ClockIn, r=Depends(rt)):
     """Lock-step clock: FuelGrid advances the simulator itself, planning every tick before taking the next."""
     if r.client.kind != "simulator":
         raise HTTPException(409, "the lock-step clock drives the simulator; switch to it first")
-    await r.clock.start(body.speed)
+    try:
+        await r.clock.start(body.speed)
+    except Exception as e:  # simulator down: a clean 503 like the other admin routes, not a 500
+        raise HTTPException(503, f"simulator admin unreachable: {e}") from None
     r.repo.audit(r.run_id, "scenario", f"Lock-step clock started at {r.clock.speed:g} ticks/s", "info")
     return r.clock.status()
 
@@ -173,7 +176,7 @@ async def clock_status(r=Depends(rt)):
 async def sim_control(action: str, r=Depends(rt)):
     if action not in ("run", "pause", "step", "reset"):
         raise HTTPException(404)
-    if action in ("run", "pause") and r.clock and r.clock.running:
+    if action in ("run", "pause", "reset") and r.clock and r.clock.running:
         await r.clock.stop()  # two things must not fight over the simulated clock
     out = await _admin(r, "POST", f"/admin/{action}")
     r.repo.audit(r.run_id, "scenario", f"Simulator {action}")

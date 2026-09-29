@@ -71,3 +71,28 @@ async def test_demo_world_waits_for_the_platform_each_tick():
     await asyncio.sleep(0.6)
     await demo.stop()
     assert len(seen) >= 5 and seen == sorted(seen) and len(set(seen)) == len(seen), "each tick is handed to the platform exactly once, in order"
+
+
+@pytest.mark.asyncio
+async def test_lockstep_clock_stop_waits_for_in_flight_step():
+    src = FakeSource()
+    sync = FakeSync(src)
+    clock = LockStepClock(src, sync)
+    await clock.start(speed=20)
+    await asyncio.sleep(0.05)
+    await clock.stop()
+    n = len(src.calls)
+    await asyncio.sleep(0.1)
+    assert len(src.calls) == n and not clock.running, "no step may run after stop() returns"
+
+
+@pytest.mark.asyncio
+async def test_lockstep_clock_start_fails_cleanly_when_simulator_down():
+    class DownSource(FakeSource):
+        async def admin(self, method, path, body=None):
+            raise ConnectionError("simulator unreachable")
+
+    clock = LockStepClock(DownSource(), FakeSync(FakeSource()))
+    with pytest.raises(ConnectionError):
+        await clock.start(speed=2)
+    assert not clock.running and clock._task is None

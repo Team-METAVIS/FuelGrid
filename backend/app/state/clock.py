@@ -50,9 +50,13 @@ class LockStepClock:
 
     async def stop(self) -> None:
         self.running = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
+        task, self._task = self._task, None
+        if task:
+            task.cancel()
+            try:  # wait for an in-flight step to unwind so it cannot race a reset or source switch
+                await task
+            except asyncio.CancelledError:
+                pass
 
     def status(self) -> dict:
         return {"running": self.running, "speed": self.speed, "steps": self.steps, "last_error": self.last_error}
