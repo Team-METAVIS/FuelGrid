@@ -12,7 +12,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.api.feed import guard, rt
+from app.api.feed import guard, key_ok, rt
 
 router = APIRouter(prefix="/api")
 
@@ -235,4 +235,4 @@ async def reject_all(r=Depends(rt)):
 async def auth_status(request: Request, r=Depends(rt)):
     """Lets the console know whether write actions need an API key and whether the key it holds works."""
     key = request.headers.get("x-api-key")
-    return {"required": bool(r.cfg.api_key), "valid": (not r.cfg.api_key) or key == r.cfg.api_key}
+    return {"required": bool(r.cfg.api_key), "valid": key_ok(r.cfg.api_key, key)}

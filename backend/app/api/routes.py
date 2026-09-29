@@ -3,11 +3,12 @@ import json
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.api import views
+from app.api.feed import guard
 
 router = APIRouter(prefix="/api")
 
@@ -16,10 +17,6 @@ def rt(request: Request):
     return request.app.state.rt
 
 
-def guard(request: Request, x_api_key: str | None = Header(default=None)):
-    key = request.app.state.rt.cfg.api_key
-    if key and x_api_key != key:
-        raise HTTPException(401, "invalid api key")
 
 
 @router.get("/state")

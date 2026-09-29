@@ -2,6 +2,7 @@
 
 Point any real system at /api/feed/* and FuelGrid runs on it; nothing here is simulator-specific."""
 import asyncio
+import hmac
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -15,9 +16,13 @@ def rt(request: Request):
     return request.app.state.rt
 
 
+def key_ok(expected: str | None, given: str | None) -> bool:
+    """True when no key is configured or the given one matches (constant-time comparison)."""
+    return not expected or hmac.compare_digest((given or "").encode(), expected.encode())
+
+
 def guard(request: Request, x_api_key: str | None = Header(default=None)):
-    key = request.app.state.rt.cfg.api_key
-    if key and x_api_key != key:
+    if not key_ok(request.app.state.rt.cfg.api_key, x_api_key):
         raise HTTPException(401, "invalid api key")
 
 
