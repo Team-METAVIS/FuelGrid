@@ -43,3 +43,37 @@ jobs:
           curl -sf http://127.0.0.1:8080/healthz
           curl -sf http://127.0.0.1:8080/metrics | grep -q fg_degraded
           docker rm -f fg
+
+  e2e:
+    # Deploy -> Health Check -> Running Application against the organizer's real simulator image,
+    # then the spec's demo story as an automated test: inject a failure, see it detected, see recovery.
+    needs: [package]
+    runs-on: ubuntu-latest
+    env: { H: "http://127.0.0.1:8080" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy full stack (health-gated, rolls back on failure)
+        run: HEALTH_TIMEOUT=180 bash scripts/deploy.sh ci
+      - name: Decision loop runs against the simulator
+        run: |
+          curl -sf -X POST "$H/api/sim/step" >/dev/null
+          curl -sf -X POST "$H/api/cycle"
+          curl -sf "$H/api/state" | grep -q '"ready":true'
+      - name: Crisis scenario is accepted
+        run: curl -sf -X POST "$H/api/scenarios/depot_constraint/apply"
+      - name: "Resilience: simulator unavailable -> degraded mode -> recovery"
+        run: |
+          curl -sf -X POST "$H/api/sim/inject/fault" -H 'content-type: application/json' \
+               -d '{"type":"unavailable","duration_seconds":20}'
+          for i in $(seq 1 30); do curl -sf "$H/api/health" | grep -q '"mode":"cached-state (degraded)"' && break; sleep 1; done
+          curl -sf "$H/api/health" | grep -q '"mode":"cached-state (degraded)"'
+          curl -sf "$H/api/state" | grep -q '"ready":true'   # console keeps serving the last good state
+          for i in $(seq 1 90); do curl -sf "$H/api/health" | grep -q '"mode":"live"' && break; sleep 1; done
+          curl -sf "$H/api/health" | grep -q '"mode":"live"'
+          curl -sf "$H/api/audit" | grep -qi 'fault'
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

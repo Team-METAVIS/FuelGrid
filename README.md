@@ -9,7 +9,7 @@ Built for the BUP CSE Fest 2026 hackathon finals. FuelGrid watches a fuel networ
 | **Not simulator-bound** | Two data-source adapters (simulator, generic live feed) behind one canonical model; proven on an independent network with different topology, four fuels, a different clock and injected shocks |
 | **Dynamic by design** | Re-plans from live measured state every cycle, adapts online, detects drift, retrains, gates, rolls back; stations, roads and fuels can change while running |
 | **Safe for real use** | Auto-approve is off by default and bounded; emergency stop; every control validated, audited and persisted; API-key aware |
-| **Proven** | 90 automated tests, load tested to 250 concurrent users with zero errors, every graph below generated from the project's own result files |
+| **Proven** | 94 automated tests, load tested to 250 concurrent users with zero errors, every graph below generated from the project's own result files |
 
 New here? Read [round_one_prep.md](round_one_prep.md): plain-language walkthrough, internals, and judge Q&A.
 
@@ -243,13 +243,14 @@ Or everything in containers: `docker compose up --build` (add `--profile monitor
 ### Reproduce every number
 | What | Command |
 |---|---|
-| Tests (90) | `cd backend && uv run pytest -q` |
+| Tests (94) | `cd backend && uv run pytest -q` |
 | Collect training data | `uv run python -m app.ml.collect --sim --worlds` |
 | Train + evaluate the model | `uv run python -m app.ml.train` → `docs/MODEL.md` |
 | Adaptation experiment | `uv run python -m app.ml.adapt` → `docs/ADAPTATION.md` |
 | Decision benchmark | `uv run python -m app.scenarios.cli --scenarios all` |
 | Tuning sweep | `uv run python -m app.scenarios.sweep` |
 | Load test | `bash loadtest/run.sh` |
+| Deploy a version (health-gated, auto-rollback) | `bash scripts/deploy.sh [tag]` |
 | All graphs | `backend/.venv/Scripts/python scripts/make_figures.py` |
 
 ---
@@ -270,7 +271,7 @@ Or everything in containers: `docker compose up --build` (add `--profile monitor
 | `backend/ml_data`, `backend/ml_models` | Collected datasets, champion model |
 | `frontend` | Operator console |
 | `deploy`, `Dockerfile`, `docker-compose.yml`, `.github` | Deployment, monitoring, CI |
-| `docs` | Architecture, benchmark, model, adaptation, tuning, load test, optional features |
+| `docs` | Architecture, benchmark, model, adaptation, tuning, load test, optional features, [deliverables checklist](docs/DELIVERABLES.md), [finals demo runbook](docs/DEMO_RUNBOOK.md) |
 
 ## 6. Limitations (stated plainly)
 Training data is simulated (no real network data was available). Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan). One process caps at about 160 requests/s. The model needs a little history per station (24 observations) before it takes over from a moving average. Reinforcement learning, multi-agent control and Kubernetes were deliberately not built; the reasons are in [docs/OPTIONAL_FEATURES.md](docs/OPTIONAL_FEATURES.md).

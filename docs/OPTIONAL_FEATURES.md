@@ -19,8 +19,9 @@ question: *does it make the operators' decisions better or the system more trust
 | Data-source independence | **Built** | Canonical model, simulator and live-feed adapters, independent generated world, live source switching (`docs/ARCHITECTURE.md`). |
 | Simulation replay | **Built** | Replay page scrubs through any recorded run (fuel levels, decisions, incidents). |
 | Experiment tracking, model versioning | **Built** | `fg_experiments` table, model registry with one-click activation, tuning sweep (`docs/TUNING.md`). |
+| Automated rollback, deployment versioning | **Built** | Every image is tagged with its git SHA; `scripts/deploy.sh` starts a version, waits for it to report itself healthy and restarts the previous version if it does not. CI runs this against the organizer's simulator image, then injects a simulator outage and asserts degraded mode and recovery (`.github/workflows/ci.yml`, job `e2e`). |
 | Reinforcement learning | **Not built, on purpose** | Each planning step is a small, exactly solvable problem, so an exact optimizer is already optimal for it. RL would need a training loop against a slow simulator and would have to beat a strong baseline to justify itself; we have no evidence it could. The organizers ask for that comparison if RL is used. |
 | Multi-agent decision systems | **Not built, on purpose** | With 2 depots and 4 stations one solver sees the whole problem. Splitting it into negotiating agents would add failure modes and lose optimality. |
 | Kubernetes, autoscaling | **Not built, on purpose** | The load test shows one process handles about 160 requests/s with zero errors, far above any operations room. Docker Compose with health checks is the right size. The scaling path is described in `docs/LOAD_TEST.md`. |
 
-Everything built is covered by automated tests (90) and listed in the round-one notes.
+Everything built is covered by automated tests (94) and listed in the round-one notes.

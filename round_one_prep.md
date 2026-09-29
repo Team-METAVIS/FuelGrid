@@ -245,7 +245,7 @@ Every control is validated on the server (bad values are refused), written to th
 
 - **Observability:** Prometheus metrics (request rate/latency/errors, source health, breaker, fallbacks, open alerts, forecast error and confidence, model retrains, allocations, service level, database), structured logs, a health page, ready-made Grafana dashboard and alert rules.
 - **Deployment:** `docker compose up --build` (simulator + FuelGrid); optional profiles for Prometheus/Grafana and a local database; multi-stage image with health check and non-root user; CI runs lint, tests, front-end build, image build and a start-up smoke test.
-- **Testing:** 90 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
+- **Testing:** 94 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
 
 ---
 
