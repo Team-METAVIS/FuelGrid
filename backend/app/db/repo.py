@@ -1,4 +1,4 @@
-"""Persistence on Supabase Postgres. Writes are buffered and fire-and-forget: the control loop never blocks
+"""Persistence on PostgreSQL (local container by default; any Postgres with pgvector works). Writes are buffered and fire-and-forget: the control loop never blocks
 on (or fails because of) the database. If the DB is down, we keep an in-memory ring buffer for the UI."""
 import asyncio
 import json
@@ -20,6 +20,24 @@ def _async_url(url: str) -> str:
         if url.startswith(p):
             return "postgresql+asyncpg://" + url[len(p):]
     return url
+
+
+def split_sql(script: str) -> list[str]:
+    """Split a migration file into statements on ';' - except inside $$ ... $$ blocks (functions, DO blocks)."""
+    out, buf, inside = [], [], False
+    for piece in script.split("$$"):
+        if inside:
+            buf.append("$$" + piece + "$$")
+        else:
+            parts = piece.split(";")
+            for i, part in enumerate(parts):
+                buf.append(part)
+                if i < len(parts) - 1:
+                    out.append("".join(buf).strip())
+                    buf = []
+        inside = not inside
+    out.append("".join(buf).strip())
+    return [s for s in out if s]
 
 
 class Repo:
@@ -71,7 +89,7 @@ class Repo:
                     lines = [ln for ln in f.read_text(encoding="utf-8").splitlines() if not ln.strip().startswith("--")]
                     async with self.engine.begin() as c:
                         await c.execute(text("set local statement_timeout = '60s'"))
-                        for stmt in [s.strip() for s in "\n".join(lines).split(";") if s.strip()]:
+                        for stmt in split_sql("\n".join(lines)):
                             await c.execute(text(stmt))
                         await c.execute(text("insert into fg_migrations (name) values (:n) on conflict do nothing"), {"n": f.name})
                     log.info("db_migration_applied", name=f.name)

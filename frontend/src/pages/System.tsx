@@ -2,7 +2,7 @@ import { Cpu, Database, ExternalLink, GitBranch, Radio, Server, Sigma } from "lu
 import { useEffect, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge, Card, PageHeader, Stat, statusTone } from "../components/ui";
-import { get } from "../lib/api";
+import { apiUrl, get } from "../lib/api";
 import { pct } from "../lib/format";
 import { useLive } from "../lib/live";
 
@@ -90,7 +90,7 @@ export default function System() {
         <Card title="Observability endpoints">
           <div className="space-y-2 text-sm">
             {[["/metrics", "Prometheus metrics: system + intelligence (MAPE, confidence, fallbacks, alerts)"], ["/docs", "OpenAPI documentation"], ["/api/health", "Structured component health (JSON)"], ["/healthz", "Liveness probe"]].map(([u, d]) => (
-              <a key={u} href={u} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-2.5 hover:bg-slate-50">
+              <a key={u} href={apiUrl(u)} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-2.5 hover:bg-slate-50">
                 <span><span className="font-mono text-[13px] text-brand-700">{u}</span><span className="ml-3 text-xs text-slate-500">{d}</span></span><ExternalLink size={14} className="text-slate-400" />
               </a>
             ))}

@@ -47,3 +47,12 @@ async def test_writes_are_batched_into_few_transactions_and_flush_waits():
 async def test_flush_returns_immediately_when_nothing_is_queued():
     repo = Repo(None)
     assert await repo.flush(timeout=1)
+
+
+def test_migration_splitter_keeps_dollar_quoted_blocks_whole():
+    from app.db.repo import MIGRATIONS, split_sql
+    sql = "create table a (x int);\ndo $$\nbegin\n  perform 1;\n  perform 2;\nend $$;\nselect 1;"
+    parts = split_sql(sql)
+    assert len(parts) == 3 and parts[1].startswith("do $$") and parts[1].endswith("$$") and "perform 2;" in parts[1]
+    for f in MIGRATIONS.glob("*.sql"):  # every shipped migration splits into complete statements
+        assert all(p and not p.endswith(";") for p in split_sql(f.read_text(encoding="utf-8")))

@@ -68,6 +68,8 @@ class Snapshot:
 class StateStore:
     """Latest good snapshot + accumulated demand history. Survives simulator outages (cached-state mode)."""
 
+    MAX_TICKS_PER_SERIES = 20000  # about 1 year of 30-minute ticks
+
     def __init__(self):
         self.snapshot: Snapshot | None = None
         self.regions: dict[str, float] = {}  # region id -> demand factor (static world data, fetched once)
@@ -88,6 +90,11 @@ class StateStore:
                 else:
                     bisect.insort(order, r.tick)
             d[r.tick] = (r.demand_liters, r.served_liters, r.unmet_liters, r.sim_time)
+            order = self._order[key]
+            if len(order) > self.MAX_TICKS_PER_SERIES:  # bound memory on a long-running deployment
+                for t in order[:len(order) - self.MAX_TICKS_PER_SERIES]:
+                    d.pop(t, None)
+                del order[:len(order) - self.MAX_TICKS_PER_SERIES]
         return n
 
     def series(self, station_id: str, fuel: str, last: int | None = None) -> list[tuple[int, float, object]]:

@@ -3,14 +3,16 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.adapters.feed import FeedSource
 from app.api.controls import restore
 from app.api.controls import router as controls_router
+from app.api.data import router as data_router
 from app.api.extras import router as extras_router
 from app.api.feed import router as feed_router
 from app.api.routes import router
@@ -119,7 +121,7 @@ def create_app(cfg: Settings | None = None, start_background: bool = True) -> Fa
             await rt.repo.start()
             await rt.engine.memory.load()
             await manager.load(rt.repo)
-            await restore(rt)  # operator settings persisted in Supabase (auto-dispatch is never re-enabled automatically)
+            await restore(rt)  # operator settings persisted in the database (auto-dispatch is never re-enabled automatically)
             rt.repo.audit(rt.run_id, "integration", "FuelGrid started", "info", None, {"policy": cfg.active_policy, "source": cfg.data_source})
             rt.sync.start()
         log.info("started", run_id=rt.run_id, source=cfg.data_source, sim=cfg.sim_base_url, db=bool(cfg.database_url))
@@ -134,15 +136,30 @@ def create_app(cfg: Settings | None = None, start_background: bool = True) -> Fa
 
     app = FastAPI(title="FuelGrid", version="0.2.0", lifespan=lifespan)
     app.add_middleware(StatsMiddleware, stats=stats)
+    origins = [o.strip() for o in cfg.cors_origins.split(",") if o.strip()]
+    if origins:
+        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "PUT", "DELETE"],
+                           allow_headers=["Content-Type", "X-API-Key", "Last-Event-ID"], max_age=600)
     Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(app, include_in_schema=False)
     app.include_router(router)
     app.include_router(extras_router)
     app.include_router(feed_router)
     app.include_router(controls_router)
+    app.include_router(data_router)
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz():
+        """Liveness: the process is up."""
         return {"status": "ok"}
+
+    @app.get("/readyz", tags=["ops"])
+    async def readyz(request: Request):
+        """Readiness: the platform has a snapshot from its data source and can serve decisions. 503 until then."""
+        rt = request.app.state.rt
+        snap = rt.store.snapshot
+        if snap is None:
+            return JSONResponse({"ready": False, "reason": "no data from the data source yet", "source": rt.client.kind}, status_code=503)
+        return {"ready": True, "source": rt.client.kind, "tick": snap.tick, "stale": snap.stale, "database": rt.repo.up}
 
     if WEB.exists():
         app.mount("/assets", StaticFiles(directory=WEB / "assets"), name="assets")

@@ -9,7 +9,7 @@ Built for the BUP CSE Fest 2026 hackathon finals. FuelGrid watches a fuel networ
 | **Not simulator-bound** | Two data-source adapters (simulator, generic live feed) behind one canonical model; proven on an independent network with different topology, four fuels, a different clock and injected shocks |
 | **Dynamic by design** | Re-plans from live measured state every cycle, adapts online, detects drift, retrains, gates, rolls back; stations, roads and fuels can change while running |
 | **Safe for real use** | Auto-approve is off by default and bounded; emergency stop; every control validated, audited and persisted; API-key aware |
-| **Proven** | 104 automated tests, load tested to 250 concurrent users with zero errors, every graph below generated from the project's own result files |
+| **Proven** | 110 automated tests, load tested to 250 concurrent users with zero errors, every graph below generated from the project's own result files |
 
 New here? Read [round_one_prep.md](round_one_prep.md): plain-language walkthrough, internals, and judge Q&A. What we cover from the hackathon documents, requirement by requirement: [docs/REQUIREMENTS_COVERAGE.md](docs/REQUIREMENTS_COVERAGE.md).
 
@@ -41,7 +41,8 @@ flowchart LR
   end
   subgraph OUT[Outputs]
     UI[Operator console<br/>React, live via SSE]
-    DB[(Supabase Postgres + pgvector<br/>decisions, audit, models, settings,<br/>incident memory)]
+    DB[(PostgreSQL + pgvector<br/>local Docker container<br/>decisions, audit, models, settings,<br/>incident memory)]
+    API[Data API<br/>/api/v1 stations, depots, routes,<br/>supply, demand history, allocations]
     PR[Prometheus + Grafana]
     AS[Ops assistant<br/>Gemini / Groq optional]
   end
@@ -58,6 +59,8 @@ flowchart LR
   DE --> DB
   MM --> DB
   DE --> UI
+  ST --> API
+  DE --> API
   CORE --> PR
   DE --> AS
 ```
@@ -96,7 +99,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
   D0["Simulator scenarios + independent worlds<br/>188 series"] --> T0["Offline training<br/>python -m app.ml.train"]
-  T0 --> CH[(Champion model<br/>registry, Supabase)]
+  T0 --> CH[(Champion model<br/>registry, PostgreSQL)]
   CH --> FCST[Forecast every cycle]
   FCST --> OBS[Compare 1-step forecast with what happened]
   OBS -->|every tick| BIAS[Online correction<br/>follows level shifts in a few ticks]
@@ -196,10 +199,10 @@ The trained model forecasts ~32% better than the hand-set profile and ~45% bette
 
 | Profile | Requests | Failures | p50 | p95 | p99 | Throughput |
 |---|---:|---:|---:|---:|---:|---:|
-| 50 users, 60 s | 2,407 | 0 | 8 ms | 37 ms | 68 ms | 40 req/s |
-| 250 users, 45 s (stress) | 7,258 | 0 | 270 ms | 660 ms | 900 ms | 160 req/s (one core) |
+| 50 users, 60 s | 2,390 | 0 | 9 ms | 76 ms | 150 ms | 40 req/s |
+| 250 users, 45 s (stress) | 6,487 | 0 | 380 ms | 920 ms | 1.8 s | 146 req/s (one core) |
 
-The load test also found and we fixed a thread-safety error, repeated heavy work, and a way to overload the shared simulator. Full write-up: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
+Measured with the trained model active and PostgreSQL in Docker. The load test also found and we fixed a thread-safety error, repeated heavy work, CPU starvation from the model's worker threads, and a way to overload the shared simulator. Full write-up: [docs/LOAD_TEST.md](docs/LOAD_TEST.md).
 
 ---
 
@@ -214,11 +217,14 @@ The load test also found and we fixed a thread-safety error, repeated heavy work
 | Resilience | Stale-data limit, optimizer rollback threshold |
 | Data sources | Switch simulator / live feed, lock-step clock, demo world with live "change the world" buttons |
 
-Every change is validated server-side, written to the audit log (old and new value) and saved in Supabase. After a restart auto-approve is deliberately left off. Set `API_KEY` to require a key for every write action.
+Every change is validated server-side, written to the audit log (old and new value) and saved in the database. After a restart auto-approve is deliberately left off. Set `API_KEY` to require a key for every write action.
 
 **Pace matters.** The simulator's own Run mode ticks at a fixed 8 ticks/s whether or not anyone has planned; a platform that reads twice a second then falls behind. The **lock-step clock** (Data sources page) has FuelGrid advance the simulator itself (step, read, plan, repeat), so every tick is planned. A banner warns whenever the world outpaces planning.
 
 ---
+
+### API
+70 operations under `/api` (plus `/healthz`, `/readyz`, `/metrics`, `/docs`). The `/api/v1` resource endpoints (`stations`, `depots`, `routes`, `supply-arrivals`, `events`, `demand-history`, `allocations`, `metrics`, `instance`) answer from whichever data source is active, and `POST /api/v1/allocations` sends a manual dispatch through the same precheck, idempotency and audit path as recommendations. Complete generated reference: [docs/API.md](docs/API.md).
 
 ## 4. Run it
 
@@ -226,7 +232,9 @@ Every change is validated server-side, written to the audit log (old and new val
 # 1. organizer simulator (unmodified image)
 docker compose -f simulator/docker-compose.yml up -d
 
-# 2. settings: copy .env.example to .env (DATABASE_URL = Supabase session-pooler string; optional GEMINI_API_KEY, GROQ_API_KEY)
+# 2. local database (PostgreSQL 16 + pgvector in Docker; data kept in a volume) and settings
+docker compose up -d db
+cp .env.example .env        # DATABASE_URL already points at that container; optional GEMINI_API_KEY, GROQ_API_KEY
 
 # 3. console (once)
 cd frontend && npm ci && npm run build && cd ..
@@ -235,7 +243,7 @@ cd frontend && npm ci && npm run build && cd ..
 cd backend && uv sync --python 3.12 && uv run uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
-Or everything in containers: `docker compose up --build` (add `--profile monitoring` for Prometheus + Grafana). On Windows use `127.0.0.1`, not `localhost`.
+Or everything in containers: `docker compose up --build` (simulator + FuelGrid + PostgreSQL; add `--profile monitoring` for Prometheus + Grafana). The database is plain PostgreSQL with pgvector, so any other Postgres (a hosted one included) works by changing `DATABASE_URL`. On Windows use `127.0.0.1`, not `localhost`.
 
 **See it run on a network the platform has never seen:** open *Data sources* → *Start demo world* → turn on auto-approve → click the "change the world" buttons. Or drive it from outside over HTTP:
 `cd backend && uv run python -m app.worldgen.run --url http://127.0.0.1:8080 --ticks 600 --change 200:demand_shift --change 350:seasonality_shift`
@@ -243,7 +251,7 @@ Or everything in containers: `docker compose up --build` (add `--profile monitor
 ### Reproduce every number
 | What | Command |
 |---|---|
-| Tests (104) | `cd backend && uv run pytest -q` |
+| Tests (110) | `cd backend && uv run pytest -q` |
 | Collect training data | `uv run python -m app.ml.collect --sim --worlds` |
 | Train + evaluate the model | `uv run python -m app.ml.train` → `docs/MODEL.md` |
 | Adaptation experiment | `uv run python -m app.ml.adapt` → `docs/ADAPTATION.md` |
@@ -252,6 +260,7 @@ Or everything in containers: `docker compose up --build` (add `--profile monitor
 | Load test | `bash loadtest/run.sh` |
 | Deploy a version (health-gated, auto-rollback) | `bash scripts/deploy.sh [tag]` |
 | All graphs | `backend/.venv/Scripts/python scripts/make_figures.py` |
+| API reference | `backend/.venv/Scripts/python scripts/make_api_doc.py` → `docs/API.md` |
 
 ---
 
@@ -271,9 +280,9 @@ Or everything in containers: `docker compose up --build` (add `--profile monitor
 | `backend/ml_data`, `backend/ml_models` | Collected datasets, champion model |
 | `frontend` | Operator console |
 | `deploy`, `Dockerfile`, `docker-compose.yml`, `.github` | Deployment, monitoring, CI |
-| `docs` | [Requirements coverage](docs/REQUIREMENTS_COVERAGE.md), [deliverables checklist](docs/DELIVERABLES.md), [finals demo runbook](docs/DEMO_RUNBOOK.md), architecture, benchmark, model, adaptation, tuning, load test, optional features |
+| `docs` | [Requirements coverage](docs/REQUIREMENTS_COVERAGE.md), [deliverables checklist](docs/DELIVERABLES.md), [finals demo runbook](docs/DEMO_RUNBOOK.md), [deployment (Docker, Vercel, pointing at the simulator)](docs/DEPLOYMENT.md), [API reference](docs/API.md), [system audit](docs/AUDIT.md), architecture, benchmark, model, adaptation, tuning, load test, optional features |
 
 ## 6. Limitations (stated plainly)
-Training data is simulated (no real network data was available). Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan). One process caps at about 160 requests/s. The model needs a little history per station (24 observations) before it takes over from a moving average. Reinforcement learning, multi-agent control and Kubernetes were deliberately not built; the reasons are in [docs/OPTIONAL_FEATURES.md](docs/OPTIONAL_FEATURES.md).
+Training data is simulated (no real network data was available). Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan). One process caps at about 145 requests/s. The model needs a little history per station (24 observations) before it takes over from a moving average. Reinforcement learning, multi-agent control and Kubernetes were deliberately not built; the reasons are in [docs/OPTIONAL_FEATURES.md](docs/OPTIONAL_FEATURES.md).
 
 Everything is simulated. No real fuel infrastructure is touched; secrets live in the untracked `.env`.

@@ -3,7 +3,8 @@
 #   simulator    http://localhost:8000   (organizer image, unmodified)
 # Optional monitoring stack:   docker compose --profile monitoring up --build
 #   prometheus   http://localhost:9090      grafana http://localhost:3000  (admin / admin, dashboard pre-loaded)
-# Optional local database (no Supabase account needed):   docker compose --profile localdb up --build
+# The database is a local PostgreSQL 16 + pgvector container (service `db`, data kept in the `fuelgrid-pgdata` volume).
+# Any other Postgres works too: set DATABASE_URL (a hosted Postgres such as Supabase needs no code change).
 services:
   simulator:
     image: asifmahmoud414/bup-fuel-supply-simulator:1.0.0
@@ -26,10 +27,11 @@ services:
     image: fuelgrid:${GIT_SHA:-dev}
     depends_on:
       simulator: { condition: service_healthy }
+      db: { condition: service_healthy }
     environment:
       SIM_BASE_URL: http://simulator:8000
-      # Supabase Postgres (session pooler URL). Leave empty to run memory-only, or use the localdb profile.
-      DATABASE_URL: ${DATABASE_URL:-}
+      # local Postgres by default; override DATABASE_URL to use another server, or set it empty to run memory-only
+      DATABASE_URL: ${DATABASE_URL-postgresql://fuelgrid:${POSTGRES_PASSWORD:-fuelgrid}@db:5432/fuelgrid}
       AUTO_EXECUTE: ${AUTO_EXECUTE:-false}
       API_KEY: ${API_KEY:-}
       # optional free-tier AI wording for the Ops assistant (Gemini first, Groq backup); works without
@@ -38,11 +40,20 @@ services:
     ports: ["8080:8080"]
     restart: unless-stopped
 
-  localdb:
-    profiles: ["localdb"]
-    image: postgres:16-alpine
-    environment: { POSTGRES_PASSWORD: fuelgrid, POSTGRES_DB: fuelgrid }
-    ports: ["5432:5432"]
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: fuelgrid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fuelgrid}
+      POSTGRES_DB: fuelgrid
+    volumes: ["fuelgrid-pgdata:/var/lib/postgresql/data"]
+    ports: ["127.0.0.1:5432:5432"]   # reachable from the host for `uvicorn` development; not exposed to the network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fuelgrid -d fuelgrid"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
 
   prometheus:
     profiles: ["monitoring"]
@@ -63,3 +74,6 @@ services:
       - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["3000:3000"]
     depends_on: [prometheus]
+
+volumes:
+  fuelgrid-pgdata:

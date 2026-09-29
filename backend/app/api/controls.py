@@ -3,7 +3,7 @@
 Design rules:
   * Declarative: each control has a type, range, default, group and help text, so the console renders itself from
     `/api/controls` and bad values are refused server-side (never trust the browser).
-  * Every change is written to the audit log with old and new value, and saved to Supabase so it survives a restart.
+  * Every change is written to the audit log with old and new value, and saved to the database so it survives a restart.
   * Safety first: after a restart, automatic dispatch is deliberately left OFF (and the audit log says so) until a person
     switches it on again.
   * A single emergency stop halts planning and auto-dispatch and withdraws pending recommendations."""

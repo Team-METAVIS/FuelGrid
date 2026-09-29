@@ -351,6 +351,38 @@ class DecisionEngine:
         self._prev_inv = {"tick": snap.tick, "inv": {(s.id, f): v for s in snap.stations.values() for f, v in s.inventory.items()}}
         return found
 
+    async def manual(self, spec: dict, actor: str = "operator") -> Decision:
+        """A dispatch entered by a person (or an external caller), not by the planner. It gets the same protection as any other:
+        precheck against the source's rules, an idempotency key, an audit entry and a decision record."""
+        snap = self.store.snapshot
+        if snap is None:
+            raise ValueError("no data yet")
+        key = spec.get("idempotency_key")
+        if key:
+            prior = next((d for d in self.decisions.values() if d.key == key), None)
+            if prior is not None:
+                same = (prior.rec.depot_id, prior.rec.station_id, prior.rec.route_id, prior.rec.fuel, prior.rec.quantity) == (
+                    spec["source_depot_id"], spec["destination_station_id"], spec["route_id"], spec["fuel_type"], spec["quantity"])
+                if not same:
+                    raise ValueError("IDEMPOTENCY_KEY_MISMATCH: this key was already used for a different allocation")
+                return prior  # a safe retry returns the original result
+        st = snap.stations.get(spec["destination_station_id"])
+        if st is None or spec["source_depot_id"] not in snap.depots or spec["route_id"] not in snap.routes:
+            raise ValueError("NOT_FOUND: unknown depot, station or route")
+        rec = Recommendation(
+            tick=snap.tick, station_id=spec["destination_station_id"], fuel=spec["fuel_type"], depot_id=spec["source_depot_id"], route_id=spec["route_id"],
+            quantity=float(spec["quantity"]), severity="OK", hours_to_stockout=None, inventory=st.inventory.get(spec["fuel_type"], 0.0), demand_horizon=0.0,
+            risk_before=0.0, risk_after=0.0, unmet_before=0.0, unmet_after=0.0, confidence=1.0, policy="manual",
+            reasons=[f"Manual allocation entered by {actor}"], alternatives=[], requires_review=False)
+        d = Decision(self._next(), rec)
+        d.key = key or f"fg-{self.run_id}-manual-d{d.id}"
+        self.decisions[d.id] = d
+        self.history.append(d.id)
+        d.status, d.actor = "APPROVED", actor
+        self.repo.audit(self.run_id, "operator", f"Manual allocation #{d.id} by {actor}: {rec.quantity:,.0f} L {rec.fuel} {rec.depot_id} -> {rec.station_id}", "info", snap.tick)
+        await self._execute(d, snap)
+        return d
+
     async def cancel(self, did: int, actor: str = "operator") -> Decision:
         """Withdraw a shipment that was accepted but has not departed yet (source must allow it)."""
         d = self.decisions[did]

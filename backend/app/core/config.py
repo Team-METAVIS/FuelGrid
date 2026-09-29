@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     llm_timeout_s: float = 8.0
 
+    # browser origins allowed to call the API when the console is hosted elsewhere (for example on Vercel); comma separated, empty = same origin only
+    cors_origins: str = ""
+    assistant_per_minute: int = 30  # cap on assistant questions per minute (protects the free language-model quotas)
+
     log_level: str = "INFO"
     api_key: str | None = None  # optional operator API key for write endpoints
 

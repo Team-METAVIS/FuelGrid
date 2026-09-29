@@ -15,6 +15,7 @@ from app.ml.manager import manager
 router = APIRouter(prefix="/api")
 DOCS = Path(__file__).resolve().parents[3] / "docs"
 MAX_REPLAY_POINTS = 300
+_ASKED: list[float] = []  # timestamps of recent assistant questions (rate limit)
 _CACHE: dict[str, tuple[float, object]] = {}  # tiny TTL cache: the remote database is the slow part
 
 
@@ -50,6 +51,12 @@ async def assistant_status(r=Depends(rt)):
 
 @router.post("/assistant")
 async def ask(body: Ask, r=Depends(rt)):
+    now = time.monotonic()
+    recent = [t for t in _ASKED if now - t < 60]
+    _ASKED[:] = recent
+    if len(recent) >= r.cfg.assistant_per_minute:
+        raise HTTPException(429, "the assistant is being asked too often; try again in a moment")
+    _ASKED.append(now)
     return await assistant.ask(r, body.question)
 
 

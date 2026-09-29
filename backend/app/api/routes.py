@@ -21,7 +21,7 @@ def rt(request: Request):
 
 @router.get("/state")
 async def state(r=Depends(rt)):
-    return views.build_state(r)
+    return views.state_response(r)
 
 
 @router.get("/health")

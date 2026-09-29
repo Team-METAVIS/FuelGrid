@@ -1,4 +1,4 @@
--- FuelGrid schema (idempotent). Applied automatically at startup; safe to run by hand in Supabase SQL editor.
+-- FuelGrid schema (idempotent). Applied automatically at startup; safe to run by hand with psql.
 create table if not exists fg_decisions (
   id            bigserial primary key,
   created_at    timestamptz not null default now(),

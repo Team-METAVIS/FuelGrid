@@ -159,7 +159,7 @@ export default function Intelligence() {
         </Card>
       </div>
 
-      <Card className="mt-4" title="Experiment history" subtitle="Every benchmark and sweep run is recorded in Supabase" pad={false}>
+      <Card className="mt-4" title="Experiment history" subtitle="Every benchmark and sweep run is recorded in PostgreSQL" pad={false}>
         {exps.length === 0 ? <Empty title="No experiments recorded" /> : (
           <div className="max-h-80 overflow-auto"><table className="w-full">
             <thead><tr><Th>When</Th><Th>Run</Th><Th>Policy</Th><Th>Model</Th><Th right>Service</Th><Th right>Unmet L</Th><Th right>Forecast error</Th></tr></thead>

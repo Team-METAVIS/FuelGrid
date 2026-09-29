@@ -11,7 +11,7 @@ export default function Audit() {
   const rows = audit.filter((a) => k === "all" || a.kind === k);
   return (
     <>
-      <PageHeader title="Audit log" description="Immutable record of alerts, incidents, recoveries, fallbacks, operator actions and scenario changes (persisted in Supabase)." />
+      <PageHeader title="Audit log" description="Immutable record of alerts, incidents, recoveries, fallbacks, operator actions and scenario changes (persisted in PostgreSQL)." />
       <Card
         pad={false}
         title={`${rows.length} events`}

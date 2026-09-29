@@ -1,9 +1,12 @@
 """Read-models for the dashboard (pure functions over app state)."""
 import dataclasses
+import json
 import os
 import time
 
 import psutil
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, Response
 
 from app.intelligence.eta import report as eta_report
 
@@ -20,7 +23,7 @@ def build_health(rt) -> dict:
     stale = bool(snap and (snap.stale or age > rt.cfg.stale_after_s))
     comps = {
         "database": {"status": "healthy" if rt.repo.up else ("disabled" if not rt.repo.url else "degraded"),
-                     "detail": "Supabase Postgres" if rt.repo.up else "buffering writes in memory"},
+                     "detail": "PostgreSQL" if rt.repo.up else "buffering writes in memory"},
         "data_source": {"status": "healthy" if sim_ok and not stale else "degraded",
                       "detail": rt.client.last_error or ("stale data flag" if stale else rt.client.label),
                       "breaker_open": rt.client.breaker_open, "label": rt.client.label},
@@ -46,19 +49,32 @@ def build_health(rt) -> dict:
     }
 
 
-def build_state(rt) -> dict:
+def state_response(rt) -> Response:
+    """The dashboard payload as a ready-made response. The large body is serialized once per data version and only the small
+    health block is encoded per request, which is what keeps the busiest endpoint cheap when many operators watch."""
+    body = build_state(rt, parts=True)
+    if body is None:
+        return JSONResponse({"ready": False, "health": jsonable_encoder(build_health(rt))})
+    head = body[1]
+    return Response(head[:-1] + b',"health":' + json.dumps(jsonable_encoder(build_health(rt))).encode() + b"}", media_type="application/json")
+
+
+def build_state(rt, parts: bool = False):
     """Dashboard payload. The heavy body is cached per data version (many operators, one computation);
     health is cheap and always fresh."""
     snap = rt.store.snapshot
     if snap is None:
-        return {"ready": False, "health": build_health(rt)}
+        return None if parts else {"ready": False, "health": build_health(rt)}
     c = rt.cfg
     key = (id(snap), snap.fetched_at, rt.engine.version, id(rt.engine.plan),
            (c.auto_execute, c.active_policy, c.forecaster, rt.engine.paused, c.policy_rolled_back))
     cached = getattr(rt, "_state_cache", None)
     if cached is None or cached[0] != key:
-        cached = (key, _build_body(rt, snap))
+        body = _build_body(rt, snap)
+        cached = (key, body, json.dumps(jsonable_encoder(body)).encode())
         rt._state_cache = cached
+    if parts:
+        return cached[1], cached[2]
     return {**cached[1], "health": build_health(rt)}
 
 

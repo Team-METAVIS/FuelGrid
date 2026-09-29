@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import joblib
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
+from threadpoolctl import threadpool_limits
 
 from app.ml.features import FEATURES, SeriesData, rows_at, training_matrix
 
@@ -50,7 +51,10 @@ class DemandModel:
     # ------------------------------------------------------------------ inference
     def predict_rows(self, X: np.ndarray) -> np.ndarray:
         """(n, 3) normalised quantiles, non-crossing and non-negative."""
-        out = np.column_stack([self.models[q].predict(X) for q in QUANTILES])
+        # A few hundred rows gain nothing from OpenMP threads, and idle worker threads spin on every core, which starved the
+        # API event loop under load (measured: 2x throughput once inference runs on one thread).
+        with threadpool_limits(limits=1, user_api="openmp"):
+            out = np.column_stack([self.models[q].predict(X) for q in QUANTILES])
         return np.clip(np.sort(out, axis=1), 0.0, None)
 
     def forecast_many(self, jobs: list[tuple[SeriesData, int, np.ndarray | None]], horizon: int) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, float]]:

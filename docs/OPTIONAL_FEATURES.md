@@ -9,7 +9,7 @@ question: *does it make the operators' decisions better or the system more trust
 | Uncertainty-aware allocation | **Built** | Every need includes a safety buffer of `safety_z` standard deviations of forecast error; low confidence forces human review. `docs/TUNING.md` shows the effect of the buffer. |
 | Counterfactual simulation | **Built** | Each cycle rolls forward "do nothing", the active policy and the other policy on the same state (Overview, live). The Forecast page also shows inventory with and without pending shipments. |
 | Automated incident detection | **Built** | Road, station, depot, delivery, demand-anomaly and model-drift incidents are detected and logged, with recovery tracking. |
-| Incident memory (pgvector) | **Built** | Resolved incidents are stored in Supabase with a numeric signature and outcome; new incidents show the closest past cases. Falls back to in-memory search if the database is down. |
+| Incident memory (pgvector) | **Built** | Resolved incidents are stored in PostgreSQL (pgvector) with a numeric signature and outcome; new incidents show the closest past cases. Falls back to in-memory search if the database is down. |
 | Drift detection | **Built** | Rolling forecast error above 25% raises an incident and a Prometheus alert. |
 | Policy rollback | **Built** | Three failed optimizer cycles in a row switch the system to the rule-based policy, with a banner and a one-click restore. |
 | Event-driven architecture | **Built** | In-process event bus (`app/core/events.py`); the engine, sync layer and audit trail publish, the live UI stream subscribes with replay after reconnect. |
@@ -24,4 +24,4 @@ question: *does it make the operators' decisions better or the system more trust
 | Multi-agent decision systems | **Not built, on purpose** | With 2 depots and 4 stations one solver sees the whole problem. Splitting it into negotiating agents would add failure modes and lose optimality. |
 | Kubernetes, autoscaling | **Not built, on purpose** | The load test shows one process handles about 160 requests/s with zero errors, far above any operations room. Docker Compose with health checks is the right size. The scaling path is described in `docs/LOAD_TEST.md`. |
 
-Everything built is covered by automated tests (104) and listed in the round-one notes.
+Everything built is covered by automated tests (110) and listed in the round-one notes.

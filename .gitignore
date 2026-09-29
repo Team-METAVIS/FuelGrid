@@ -21,3 +21,5 @@ collect.log
 train.log
 adapt.log
 *.log
+loadtest/results/*.txt
+loadtest/results/*_health.json

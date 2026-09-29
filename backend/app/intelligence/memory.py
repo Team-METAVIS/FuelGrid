@@ -1,7 +1,7 @@
 """Incident memory: 'have we seen something like this before, and what happened?'
 
 Each incident is reduced to a small numeric signature (type, time of day, service level, how many stations were
-critical). Resolved incidents are stored with their outcome in Supabase (pgvector, cosine distance) and the most
+critical). Resolved incidents are stored with their outcome in Postgres (pgvector, cosine distance) and the most
 similar past cases are shown when a new one starts. If the database is down, the same search runs in memory.
 No text embeddings and no outside service are involved."""
 import math

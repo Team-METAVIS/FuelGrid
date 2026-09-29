@@ -43,17 +43,20 @@ export const apiKey = {
   get: () => { try { return localStorage.getItem(KEY) ?? ""; } catch { return ""; } },
   set: (v: string) => { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch { /* storage unavailable */ } },
 };
+/** Where the API lives. Empty = same origin (the Docker image serves both). Set VITE_API_BASE when the console is hosted separately (e.g. Vercel). */
+export const API_BASE = ((import.meta as any).env?.VITE_API_BASE ?? "").replace(/\/+$/, "");
+export const apiUrl = (path: string) => (path.startsWith("http") ? path : API_BASE + path);
 const authHeaders = (): Record<string, string> => (apiKey.get() ? { "x-api-key": apiKey.get() } : {});
 
 export async function get<T = any>(url: string): Promise<T> {
-  const r = await fetch(url, { headers: authHeaders() });
+  const r = await fetch(apiUrl(url), { headers: authHeaders() });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
 
 /** Write actions: sends the operator key; on 401 asks the console to prompt for it. */
 export async function post<T = any>(url: string, body?: unknown): Promise<T> {
-  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(apiUrl(url), { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: body ? JSON.stringify(body) : undefined });
   if (r.status === 401) {
     window.dispatchEvent(new Event("fuelgrid-auth-required"));
     throw new Error("An operator API key is required for this action.");

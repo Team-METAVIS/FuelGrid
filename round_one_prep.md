@@ -60,7 +60,7 @@ Screens: Overview (briefing, risks, comparison, live feed), Network, Decisions, 
    │                                                              (OR-Tools, fallback)    (approve, precheck,   to source
    │                                                                                       audit)
    └── Model manager: online adaptation · drift · retrain · champion/challenger · rollback
-       Supabase: decisions, audit, ticks, experiments, incident memory (pgvector), models, settings
+       PostgreSQL (Docker): decisions, audit, ticks, experiments, incident memory (pgvector), models, settings
 ```
 
 | Engine | What it is | Inputs | Output | Technique |
@@ -76,7 +76,7 @@ Screens: Overview (briefing, risks, comparison, live feed), Network, Decisions, 
 | **Decision engine** | Runs the workflow | Plan | Stable proposals, approvals, executed shipments, audit | Reconciliation, review gate, auto-approve rules, precheck, idempotent execution |
 | **Model manager** | Owns the model's life | Live history, errors | Champion model, retrain results, versions | Online bias, drift trigger, champion/challenger gate, registry |
 | **Event bus + stream** | Pushes changes to the screen | Every decision, alert, link change | Live UI updates | In-process publish/subscribe, server-sent events, replay after reconnect |
-| **Incident memory** | "Seen this before?" | Incident signature | Closest past cases and outcomes | Supabase pgvector similarity (12 numbers) |
+| **Incident memory** | "Seen this before?" | Incident signature | Closest past cases and outcomes | PostgreSQL pgvector similarity (12 numbers) |
 | **Assistant + briefing** | Plain-language answers | Live facts | Sentences | Templates from data; optional Gemini/Groq rewording with number check |
 
 **How they collaborate on one cycle** (about 30 milliseconds end to end): the adapter delivers a fresh snapshot; the store updates history; the forecast engine produces distributions; the risk engine scores every station-fuel pair; the planner turns risky pairs into needs; the optimizer solves; the impact engine attaches before/after numbers and alternatives; the decision engine reconciles proposals with the ones already on screen, applies the approval rules, prechecks and sends approved shipments; the event bus pushes everything to the console; the model manager compares the last forecast with what actually happened.
@@ -132,7 +132,7 @@ The problem: several stations need fuel, several roads could carry it, each road
 | **Four independent generated worlds** (seeds 1–4) | Our world generator (`app/worldgen/world.py`): 3 depots, 8 stations, 4 fuels, 30-minute ticks, smooth two-peak daily curves, weekday/weekend seasonality, trend, autocorrelated noise, with demand shifts, shifted peaks and surges injected mid-run | 128 series, 1,500 ticks each |
 | **Total** | | **188 series, 226,560 observations**, sampled to 250,000 training rows |
 
-Training takes about 22 seconds. Model file: 600 KB, stored in the repository and in Supabase (`fg_models`).
+Training takes about 22 seconds. Model file: 600 KB, stored in the repository and in the database (`fg_models`).
 
 **How well it works** (walk-forward on data the model did not train on; error = WAPE, total absolute error divided by total demand, lower is better; horizon = ticks ahead):
 
@@ -217,7 +217,7 @@ Training takes about 22 seconds. Model file: 600 KB, stored in the repository an
 | Lock-step clock | FuelGrid advances the simulator itself (step, read, plan, repeat) so it never falls behind; a banner warns if the world outpaces planning |
 | Operator API key | Optional; protects every write action (reading stays open) |
 
-Every control is validated on the server (bad values are refused), written to the audit log with old and new value, and **saved in Supabase** so it survives a restart. After a restart, **auto-approve is deliberately left off** and the log says so.
+Every control is validated on the server (bad values are refused), written to the audit log with old and new value, and **saved in the database** so it survives a restart. After a restart, **auto-approve is deliberately left off** and the log says so.
 
 ---
 
@@ -245,8 +245,8 @@ Every control is validated on the server (bad values are refused), written to th
 ## 11. Observability, deployment, testing
 
 - **Observability:** Prometheus metrics (request rate/latency/errors, source health, breaker, fallbacks, open alerts, forecast error and confidence, model retrains, allocations, service level, database), structured logs, a health page, ready-made Grafana dashboard and alert rules.
-- **Deployment:** `docker compose up --build` (simulator + FuelGrid); optional profiles for Prometheus/Grafana and a local database; multi-stage image with health check and non-root user; CI runs lint, tests, front-end build, image build and a start-up smoke test.
-- **Testing:** 104 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
+- **Deployment:** `docker compose up --build` (simulator + FuelGrid + a local PostgreSQL container with a persistent volume); optional profile for Prometheus/Grafana; multi-stage image with health check and non-root user; CI runs lint, tests, front-end build, image build and a start-up smoke test.
+- **Testing:** 110 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
 
 ---
 
@@ -262,7 +262,7 @@ Every control is validated on the server (bad values are refused), written to th
 
 Honest reading: doing nothing fails; both smart policies handle normal and medium crises; the optimizer's edge appears under real shortage (about a fifth less unmet demand than simple rules in the scarcity test).
 
-**Load** (`docs/LOAD_TEST.md`): 50 users, 2,407 requests, 0 failures, 95% under 37 ms, 99% under 68 ms; 250 users, 7,258 requests, 0 failures, about 160 requests/s (one processor core is the limit). The test found and we fixed: slow repeated work, a thread-safety error, and a risk of overloading the simulator.
+**Load** (`docs/LOAD_TEST.md`, measured with the trained model active): 50 users, 2,390 requests, 0 failures, 95% under 76 ms, 99% under 150 ms; 250 users, 6,487 requests, 0 failures, about 146 requests/s (one processor core is the limit). The test found and we fixed: slow repeated work, a thread-safety error, the model's worker threads starving the web server, and a risk of overloading the simulator.
 
 ---
 
@@ -273,11 +273,11 @@ Honest reading: doing nothing fails; both smart policies handle normal and mediu
 | Python + FastAPI | Fast to build, readable, strong data and ML libraries |
 | scikit-learn gradient boosting | Accurate on tabular time-series features, trains in seconds, tiny model file, gives quantiles for uncertainty |
 | Google OR-Tools (CP-SAT) | Exact optimization under many rules, deterministic |
-| Supabase Postgres + pgvector | Managed storage for audit, models, settings; vector search for incident memory |
+| PostgreSQL + pgvector (Docker) | Storage for audit, models, settings; vector search for incident memory. Runs as a local container, so the whole platform needs nothing outside Docker |
 | React + Tailwind + Recharts | Clean, modern operator console |
 | Prometheus + Grafana | Standard monitoring |
 | Gemini / Groq (free, optional) | Only to reword explanations; decisions never depend on them |
-| No reinforcement learning, multi-agent or clusters | Each planning step is solved exactly; one process handled 160 requests/s. See `docs/OPTIONAL_FEATURES.md` |
+| No reinforcement learning, multi-agent or clusters | Each planning step is solved exactly; one process handled about 145 requests/s. See `docs/OPTIONAL_FEATURES.md` |
 
 ---
 
@@ -319,9 +319,15 @@ Honest reading: doing nothing fails; both smart policies handle normal and mediu
 
 **How do you prevent AI hallucination?** Answers are built from live data; an optional language model may only reword them, and any reply with a number not in the data is discarded.
 
+**Why a database in a container instead of a hosted one?** We only use plain PostgreSQL (plus the vector extension for "seen this before" incident search), so nothing ties us to a vendor. A local container means the whole platform starts with one command and nothing outside Docker; any other Postgres works by changing one setting.
+
+**Does FuelGrid offer the same kind of endpoints as the simulator?** Yes. `/api/v1/stations`, `depots`, `routes`, `supply-arrivals`, `events`, `demand-history`, `allocations`, `metrics` and `instance` answer from whichever source is active, and `POST /api/v1/allocations` sends a manual dispatch through the same safety checks as a recommendation. Full list: `docs/API.md`.
+
+**Was the system audited?** Yes: `docs/AUDIT.md` lists what we checked (secrets, dependencies, database exposure, write protection, endpoints, load) and what we found and fixed.
+
 **Does it run in a container?** Yes: `docker compose up --build`; we verified the image starts healthy, loads the bundled trained model, and runs the demo world on an unseen 8-station network.
 
-**What are the weaknesses?** Training data is simulated; the world is small and regular so real results would be messier; planning once every several hours is throughput-limited (one shipment per road and fuel per plan); a single process is the ceiling at about 160 requests/s; the sim-only model is over-confident on other networks until retrained.
+**What are the weaknesses?** Training data is simulated; the world is small and regular so real results would be messier; planning once every several hours is throughput-limited (one shipment per road and fuel per plan); a single process is the ceiling at about 145 requests/s; the sim-only model is over-confident on other networks until retrained.
 
 ---
 

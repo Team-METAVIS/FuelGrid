@@ -1,5 +1,5 @@
 """Parameter sweep = experiment tracking. Every run is replayed on the same deterministic world and recorded
-(Supabase table fg_experiments + docs/TUNING.md), so default settings are chosen by measurement, not by feel.
+(database table fg_experiments + docs/TUNING.md), so default settings are chosen by measurement, not by feel.
 
 python -m app.scenarios.sweep --scenarios scarcity,severe_crisis --ticks 192
 """

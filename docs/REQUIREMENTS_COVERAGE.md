@@ -24,7 +24,7 @@ At the end: a summary against the evaluation weights, and the gaps stated plainl
 | Recover | ✅ | Retry, breaker, cached state, fallbacks, rollback, model retrain/rollback |
 
 ### §5 What the team must build
-✅ Data collection and management (adapters, store, Supabase persistence), analysis (forecast and risk), decision support (optimizer, approvals), applications and operator tools (React console), monitoring (metrics, health, audit).
+✅ Data collection and management (adapters, store, PostgreSQL persistence), analysis (forecast and risk), decision support (optimizer, approvals), applications and operator tools (React console), monitoring (metrics, health, audit).
 
 ### §6 Application requirement (a usable operator-facing application)
 
@@ -40,7 +40,7 @@ At the end: a summary against the evaluation weights, and the gaps stated plainl
 | Recommended allocations | ✅ | Decisions page and Overview |
 | Expected impact of decisions | ✅ | Risk before/after, unmet demand avoided, three-way comparison |
 | System alerts | ✅ | Audit log, banners for degraded mode, fallback, rollback, cadence |
-| Decision history | ✅ | Decisions page history table (persisted in Supabase); Replay page |
+| Decision history | ✅ | Decisions page history table (persisted in PostgreSQL); Replay page |
 | Service health | ✅ | System health page |
 
 The brief recommends a web application: ✅ React console, light theme, structured layout.
@@ -133,10 +133,10 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 |---|---|---|
 | Workload definition | ✅ | Locust scenario over dashboard, forecast, history, health, metrics and the full decision path |
 | Average, p50, p95, p99 | ✅ | 50 users: avg 13 ms, p50 8, p95 37, p99 68 ms |
-| Throughput | ✅ | 40 req/s at 50 users; ~160 req/s at 250 users |
+| Throughput | ✅ | 40 req/s at 50 users; ~146 req/s at 250 users |
 | Error rate | ✅ | 0 failures of 2,407 and of 7,258 requests |
 | Concurrency | ✅ | 50 and 250 users |
-| Resource usage | ✅ | CPU and memory recorded (one core is the limit; ~160–210 MB) |
+| Resource usage | ✅ | CPU and memory recorded (one core is the limit; ~270–285 MB) |
 | Understanding limits | ✅ | Limit identified, and four real defects found and fixed |
 
 ### §18 Security and engineering hygiene
@@ -163,8 +163,8 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 | Item | Status | How |
 |---|---|---|
 | CI/CD | ✅ | Passing on GitHub Actions; see §12 |
-| Automated tests | ✅ | 104 tests |
-| Experiment tracking | ✅ | `fg_experiments` (Supabase), benchmark, tuning sweep, model backtests |
+| Automated tests | ✅ | 110 tests |
+| Experiment tracking | ✅ | `fg_experiments` (PostgreSQL), benchmark, tuning sweep, model backtests |
 | Model versioning | ✅ | Registry with champion/challenger and one-click rollback |
 | Decision audit history | ✅ | `fg_decisions`, `fg_audit` |
 | Deployment versioning | ✅ | Git SHA baked into the image, shown by `/api/health` |
@@ -182,7 +182,7 @@ Also: health checks, timeouts, validation, circuit breaker, rollback: all ✅ (`
 | Optimization-ML hybrids | ✅ |
 | Uncertainty-aware allocation | ✅ safety buffer from the model's own band |
 | Counterfactual simulation | ✅ |
-| Automated incident detection | ✅ (plus incident memory in Supabase pgvector) |
+| Automated incident detection | ✅ (plus incident memory in PostgreSQL pgvector) |
 | Policy rollback | ✅ |
 | Drift detection | ✅ |
 | Event-driven architecture, streaming | ✅ in-process event bus and SSE |
@@ -200,7 +200,7 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 |---|---|---|
 | Operate only against the simulation | ✅ | Only the simulator and the generated feed world |
 | No real infrastructure, purchases or dispatches | ✅ | Nothing real is reachable |
-| No real credentials or private systems | ✅ | Only our own Supabase project and optional free AI keys |
+| No real credentials or private systems | ✅ | Only our own local database container and optional free AI keys |
 | Distinguish simulated from real | ✅ | "Simulated environment" notice in the console |
 | Document assumptions | ✅ | `round_one_prep.md`, `docs/MODEL.md`, `docs/ARCHITECTURE.md` |
 | Preserve human review for consequential decisions | ✅ | Auto-approve off by default, bounded, emergency stop |
@@ -224,7 +224,8 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 
 | Item | Status | How |
 |---|---|---|
-| Endpoints instance, depots, stations, routes, supply-arrivals, events, allocations, metrics, regions | ✅ | `app/simulator/client.py` |
+| Endpoints instance, depots, stations, routes, supply-arrivals, events, allocations, metrics, regions | ✅ | Consumed by `app/simulator/client.py`; **served** by FuelGrid too as `/api/v1/instance`, `/depots`, `/stations`, `/routes`, `/supply-arrivals`, `/events`, `/allocations`, `/metrics`, `/regions`, `/demand-history` (any active source), with `POST /api/v1/allocations` (prechecked, idempotent, audited) and `.../cancel` ([docs/API.md](API.md)) |
+| Health and readiness probes | ✅ | `/healthz` (liveness), `/readyz` (503 until data arrives), `/api/health` (components) |
 | Demand history with limit (clamped 1-2000) | ✅ | Batched single call, sized to the gap since the last tick |
 | POST allocations with idempotency key; 200/201/404/409/422/503 | ✅ | Deterministic key; replay-safe retries; error codes mapped to clear reasons |
 | Cancel a pending allocation | ✅ | Cancel button on the Decisions history and `POST /api/decisions/{id}/cancel`; the source's refusal (e.g. already departed) is shown, not hidden; depot stock is refunded locally |
@@ -247,7 +248,7 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 | Working product & user experience | 20% | Console (11 pages), controls, live updates, replay, demo world |
 | Intelligence & decision quality | 20% | Trained model (`docs/MODEL.md`), optimizer benchmark (`docs/BENCHMARK.md`), adaptation experiment (`docs/ADAPTATION.md`), tuning (`docs/TUNING_COMBOS.md`) |
 | Architecture & integration | 15% | Canonical model, two adapters, engines, diagrams (`README.md`, `docs/ARCHITECTURE.md`) |
-| DevOps & engineering quality | 15% | Docker, compose, monitoring profile, CI workflow (incl. full-stack `e2e` job), 104 tests, migrations, versioned models |
+| DevOps & engineering quality | 15% | Docker, compose, monitoring profile, CI workflow (incl. full-stack `e2e` job), 110 tests, migrations, versioned models |
 | Resilience & incident response | 10% | Resilience matrix, fault injection, breaker, fallbacks, rollback, recovery evidence |
 | Observability & performance | 10% | Prometheus, Grafana, health, audit, load test (`docs/LOAD_TEST.md`) |
 | Demo & problem understanding | 10% | `round_one_prep.md` (internals, Q&A, glossary, demo script) |
@@ -257,6 +258,6 @@ Reasons for each ⛔: `docs/OPTIONAL_FEATURES.md`.
 - Training data is simulated; there was no real network data.
 - Gemini is verified live (15 models discovered, answering through a current flash-lite model). The Groq backup path is tested against mocked endpoints only, because no Groq key is configured.
 - Planning only every several hours is throughput-limited by design (one shipment per road and fuel per plan); the lock-step clock keeps planning per tick.
-- One process is the ceiling at about 160 requests/s.
+- One process is the ceiling at about 145 requests/s.
 - Estimated arrival and transport delay are learned from completed shipments; in the deterministic simulator deliveries are always on time, so the estimates equal the schedule there and only show delays on sources where deliveries actually run late (the independent demo world or a real feed). The behaviour is covered by unit tests.
 - Reinforcement learning, multi-agent control, Kubernetes and distributed tracing were deliberately not built.

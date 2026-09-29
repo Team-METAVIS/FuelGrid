@@ -22,7 +22,7 @@ Workload per simulated user (weights in brackets), mimicking an operations room 
 | `POST /api/cycle` | 1 | **Full decision path**: read the world, forecast, optimize, reconcile recommendations |
 
 Environment: one Windows 11 laptop, everything on the same machine (FuelGrid as one process, simulator in Docker,
-Locust, Supabase over the internet). Dedicated hardware would give better numbers.
+Locust, PostgreSQL in a local Docker container). Dedicated hardware would give better numbers.
 
 ## Results
 
@@ -30,38 +30,46 @@ Locust, Supabase over the internet). Dedicated hardware would give better number
 
 | Endpoint | Requests | Failures | Avg ms | p50 | p95 | p99 | Max ms | Req/s |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| /api/briefing | 212 | 0 | 9 | 5 | 31 | 47 | 60 | 3.6 |
-| /api/decisions | 295 | 0 | 13 | 7 | 47 | 78 | 167 | 5.0 |
-| /api/forecast | 276 | 0 | 13 | 8 | 36 | 69 | 200 | 4.6 |
-| /api/health | 190 | 0 | 11 | 6 | 31 | 70 | 91 | 3.2 |
-| /api/state | 992 | 0 | 13 | 9 | 33 | 64 | 151 | 16.7 |
-| /api/timeline | 174 | 0 | 12 | 6 | 39 | 110 | 119 | 2.9 |
-| /healthz | 89 | 0 | 6 | 3 | 20 | 67 | 67 | 1.5 |
-| /metrics | 89 | 0 | 12 | 9 | 29 | 37 | 37 | 1.5 |
-| /api/cycle (full decision path) | 90 | 0 | 30 | 23 | 79 | 100 | 104 | 1.5 |
-| **All endpoints** | **2407** | **0** | **13** | **8** | **37** | **68** | **200** | **40.4** |
+| /api/briefing | 195 | 0 | 16 | 6 | 69 | 190 | 273 | 3.3 |
+| /api/decisions | 297 | 0 | 16 | 9 | 49 | 100 | 239 | 5.0 |
+| /api/forecast | 288 | 0 | 24 | 9 | 91 | 220 | 248 | 4.8 |
+| /api/health | 185 | 0 | 18 | 8 | 60 | 180 | 274 | 3.1 |
+| /api/state | 926 | 0 | 17 | 10 | 54 | 130 | 262 | 15.6 |
+| /api/timeline | 189 | 0 | 16 | 8 | 44 | 140 | 246 | 3.2 |
+| /healthz | 98 | 0 | 9 | 3 | 30 | 120 | 120 | 1.7 |
+| /metrics | 98 | 0 | 17 | 13 | 41 | 62 | 62 | 1.7 |
+| /api/cycle (full decision path) | 114 | 0 | 74 | 56 | 150 | 260 | 416 | 1.9 |
+| **All endpoints** | 2390 | 0 | 20 | 9 | 76 | 150 | 416 | 40.2 |
 
-Memory 163 MB. Error rate 0%.
+Process after the run: 267 MB memory. Error rate 0%.
 
 ### Stress — 250 concurrent users, 45 s (find the limit)
 
 | Endpoint | Requests | Failures | Avg ms | p50 | p95 | p99 | Max ms | Req/s |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| /api/state | 2908 | 0 | 306 | 270 | 650 | 870 | 1074 | 64.1 |
-| /api/forecast | 884 | 0 | 297 | 270 | 610 | 850 | 899 | 19.5 |
-| /api/cycle (full decision path) | 302 | 0 | 561 | 470 | 1400 | 1700 | 1818 | 6.7 |
-| /healthz | 306 | 0 | 186 | 170 | 410 | 610 | 636 | 6.8 |
-| **All endpoints** | **7258** | **0** | **306** | **270** | **660** | **900** | **1818** | **160.1** |
+| /api/briefing | 476 | 0 | 412 | 370 | 820 | 1000 | 1524 | 10.7 |
+| /api/decisions | 793 | 0 | 410 | 370 | 790 | 1000 | 1544 | 17.9 |
+| /api/forecast | 772 | 0 | 421 | 380 | 810 | 1100 | 1751 | 17.4 |
+| /api/health | 494 | 0 | 404 | 370 | 760 | 940 | 1301 | 11.1 |
+| /api/state | 2664 | 0 | 414 | 370 | 830 | 1200 | 1725 | 60.1 |
+| /api/timeline | 525 | 0 | 422 | 380 | 770 | 1200 | 1589 | 11.8 |
+| /healthz | 250 | 0 | 260 | 230 | 530 | 1100 | 1166 | 5.6 |
+| /metrics | 246 | 0 | 382 | 370 | 730 | 870 | 937 | 5.6 |
+| /api/cycle (full decision path) | 267 | 0 | 1314 | 1200 | 2400 | 2700 | 3299 | 6.0 |
+| **All endpoints** | 6487 | 0 | 444 | 380 | 920 | 1800 | 3299 | 146.4 |
 
-CPU about 77–100% of one core, memory 191 MB. Still **0 errors**, and the simulator stayed healthy throughout.
+Process after the run: 283 MB memory. Still **0 errors**, and the simulator stayed healthy throughout.
+
+Both runs use the current build: the trained forecasting model (it runs in every decision cycle), regional roll-up, arrival
+estimates and bottleneck analysis in the dashboard payload, and PostgreSQL in a local container.
 
 ## What we learned
 
-1. **The limit is one CPU core: roughly 160 requests/s.** Beyond that, requests queue and latency grows (typical
-   answer 270 ms at 250 users, worst 1.8 s), but nothing fails and the control loop keeps running. The service
+1. **The limit is one CPU core: roughly 145 requests/s.** Beyond that, requests queue and latency grows (typical
+   answer 380 ms at 250 users, worst 3.3 s), but nothing fails and the control loop keeps running. The service
    slows down gracefully instead of falling over.
-2. **Normal operation is very comfortable:** 95 of 100 requests finish in under 40 ms and 99 of 100 in under 70 ms;
-   the whole decision path averages 30 ms.
+2. **Normal operation is very comfortable:** 95 of 100 requests finish in under 80 ms and 99 of 100 in under 150 ms;
+   the whole decision path (including the trained model) averages 74 ms.
 3. **Scaling path:** read endpoints depend only on the latest cached snapshot, so several copies could sit behind a
    load balancer with one copy owning the decision loop. Not needed at this scale.
 
@@ -73,6 +81,7 @@ CPU about 77–100% of one core, memory 191 MB. Still **0 errors**, and the simu
 | 95th percentile 610 ms, worst 3.3 s at 50 users | Every request rebuilt the dashboard payload; shipments and demand history were re-scanned per station and fuel; forecasts recomputed per request; sync ran 4 times a second | Payload cached per data version; shipments indexed once per snapshot; ordered history index; plan's forecasts reused; sync limited to twice a second | 610 → 37 ms; worst 3.3 s → 0.2 s; decision path 894 → 30 ms |
 | One rare HTTP 500 on `/api/state` | Statistics window read from a worker thread while the main thread wrote to it | Lock around the window; read endpoints run on the main event loop | 0 errors afterwards |
 | Decision requests waited up to 38 s at 250 users | Every concurrent "decide now" ran its own full cycle | Concurrent requests share one in-flight cycle | Worst case 38 s → 1.8 s |
+| Throughput fell to 87 req/s and even `/healthz` took 500 ms once the trained model was active | scikit-learn's OpenMP worker threads spin on every core; with the API and load generator sharing the machine they starved the event loop (process showed 425% CPU) | Inference is limited to one thread (a few hundred rows gain nothing from more); the large dashboard body is serialized once per data version instead of once per request | 87 → 146 req/s at 250 users, still 0 errors |
 | **The organizer's simulator stopped responding after heavy load** | Its own database connection pool is tiny (5 plus 10 spare). Concurrent decision requests each triggered their own 8-way parallel refresh, flooding it with more simultaneous requests than it can serve | FuelGrid now caps simultaneous simulator calls at 4, and concurrent refreshes share one round of calls. Unit tests cover both. | Same stress test now leaves the simulator healthy |
 
 The last finding matters for the live event: **a client that can hang the shared simulator is a liability**, so

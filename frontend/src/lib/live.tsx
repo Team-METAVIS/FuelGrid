@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { get, post as rawPost } from "./api";
+import { apiUrl, get, post as rawPost } from "./api";
 import type { Decision, State } from "./api";
 
 interface Toast { id: number; kind: "ok" | "err"; text: string }
@@ -65,7 +65,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       timer = window.setTimeout(() => { timer = undefined; refresh(); }, 600);
     };
     const connect = () => {
-      es = new EventSource("/api/stream");
+      es = new EventSource(apiUrl("/api/stream"));
       es.addEventListener("hello", () => setStreaming(true));
       es.onmessage = (m) => {
         try {

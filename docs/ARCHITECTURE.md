@@ -5,53 +5,65 @@ loop **Observe → Detect → Predict → Decide → Simulate → Act → Monito
 
 ```mermaid
 flowchart LR
-  subgraph SIM[BUP Fuel Supply Simulator]
-    REST[/REST /v1/*/]
-    SSE[/SSE /v1/stream/]
-    ADM[/Admin /admin/* self-test only/]
+  subgraph SRC[Data sources - interchangeable]
+    SIM[BUP Fuel Supply Simulator<br/>REST /v1, SSE, admin]
+    FEED[Any live system<br/>POST /api/feed/topology, telemetry]
+    GEN[Built-in independent demo world]
   end
 
   subgraph BE[FuelGrid backend - FastAPI]
-    CL[Resilient client<br/>timeout, retry, circuit breaker,<br/>schema validation, stale flag]
+    AD[Adapters<br/>SimulatorClient: timeout, retry, breaker, bulkhead<br/>FeedSource: validation, quality score]
+    DM[Canonical domain model]
     SY[State synchronizer<br/>REST = truth, SSE = hint,<br/>poll fallback, reset detection]
-    ST[(State store<br/>latest snapshot + demand history)]
+    ST[(State store<br/>snapshot + bounded demand history)]
     subgraph INT[Intelligence]
-      FC[Forecaster<br/>seasonal prior x online level<br/>fallback: moving average]
-      RK[Risk & incident detection<br/>stockout probability, anomalies]
+      FC[Forecaster<br/>trained gradient-boosting p10/p50/p90<br/>online correction, fallback: moving average]
+      RK[Risk, incidents, bottlenecks,<br/>arrival-delay estimates]
       PL[Planner]
       OPT[OR-Tools CP-SAT optimizer<br/>fallback: rule-based policy]
-      IMP[Counterfactual impact<br/>risk before/after]
+      IMP[Impact + shadow comparison]
     end
-    EN[Decision engine<br/>review gate, approvals, executor,<br/>idempotent keys, audit]
-    API[REST + SSE API<br/>/api/*, /metrics, /healthz]
+    MM[Model manager<br/>adapt, drift, retrain, gate, rollback]
+    EN[Decision engine<br/>review gate, auto-approve rules, precheck,<br/>idempotent send, cancel, audit]
+    API[REST + SSE API<br/>/api/*, /api/v1/*, /metrics, /healthz, /readyz]
   end
 
-  DB[(Supabase Postgres<br/>decisions, audit, ticks,<br/>experiments)]
+  DB[(PostgreSQL + pgvector<br/>decisions, audit, ticks, models,<br/>settings, incident memory)]
   UI[Operator console<br/>React + Tailwind + Recharts]
-  PROM[Prometheus scrape]
+  PROM[Prometheus + Grafana]
+  LLM[Gemini / Groq<br/>optional wording]
 
-  SIM --> CL --> SY --> ST --> FC --> RK --> PL --> OPT --> IMP --> EN
-  SSE -.trigger.-> SY
-  EN -->|POST /v1/allocations| CL
+  SIM --> AD
+  FEED --> AD
+  GEN --> AD
+  AD --> DM --> SY --> ST --> FC --> RK --> PL --> OPT --> IMP --> EN
+  MM <--> FC
+  EN -->|allocations| AD
   EN --> DB
+  MM --> DB
   API --> UI
   EN --> API
+  ST --> API
   API --> PROM
-  ADM <-. scenario/chaos console .-> API
+  API -.grounded facts.-> LLM
 ```
 
 ## Modules (all replaceable)
 
 | Package | Responsibility |
 |---|---|
-| `app/simulator` | Typed models, resilient HTTP client (retry/backoff via tenacity, circuit breaker, validation, stale detection) |
-| `app/state` | Snapshot store, synchronizer (REST truth, SSE trigger, reconnect, reset detection) |
-| `app/intelligence` | Forecasters, projection & risk, policies (`optimizer`, `rules`), planner with automatic fallbacks |
-| `app/decision` | Decision engine: cycle, review gate, approval workflow, idempotent execution, incident detection, audit |
-| `app/scenarios` | Scenario library, deterministic benchmark runner + CLI, experiment recording |
-| `app/db` | Buffered, non-blocking Supabase persistence + SQL migrations |
-| `app/api` | Read-models and HTTP routes (state, decisions, forecasts, benchmarks, chaos console) |
-| `frontend` | Admin console (Overview, Network, Decisions, Forecast & Models, Scenarios, System, Audit) |
+| `app/domain` | Canonical models, errors, data-quality tracker: the only vocabulary the core knows |
+| `app/adapters` | Data-source contract and the live-feed adapter (validation, quality score, dynamic topology) |
+| `app/simulator` | Simulator adapter: typed, resilient HTTP client (retry/backoff, circuit breaker, bulkhead, stale detection) |
+| `app/state` | Snapshot store, synchronizer (REST truth, SSE trigger, reconnect, reset detection), lock-step clock |
+| `app/ml` | Features, trained quantile model, walk-forward backtests, model manager (adapt, drift, retrain, gate, rollback), datasets, training |
+| `app/intelligence` | Projection and risk, policies (`optimizer`, `rules`), planner with automatic fallbacks, arrival-delay estimates, bottlenecks, incident memory, assistant, LLM router |
+| `app/decision` | Decision engine: cycle, review gate, approval workflow, auto-approve rules, manual and cancelled shipments, idempotent execution, incident detection, audit |
+| `app/scenarios` | Scenario library, deterministic benchmark runner + CLI, tuning sweeps, experiment recording |
+| `app/worldgen` | Independent world generator and drivers (a network the simulator has never produced) |
+| `app/db` | Buffered, non-blocking PostgreSQL persistence + tracked SQL migrations (row-level security enabled) |
+| `app/api` | Read-models and HTTP routes: state, decisions, controls, feed ingestion, `/api/v1` resources, replay, models, chaos console |
+| `frontend` | Operator console (Overview, Network, Decisions, Forecast & Models, Controls, Data sources, Scenarios, Replay, Assistant, System, Audit) |
 
 Policies and forecasters are registries (`POLICIES`, `FORECASTERS`): adding, versioning, rolling back or A/B-comparing
 one is a one-line change plus a benchmark run.
@@ -95,7 +107,7 @@ one is a one-line change plus a benchmark run.
 * Structured JSON logs (structlog) for integration failures, decisions, fallbacks, recoveries.
 * `/api/health`: component status (database, simulator, event stream, prediction, decision engine), API latency and
   error rate, process CPU/memory.
-* Audit trail persisted in Supabase (`fg_audit`, `fg_decisions`, `fg_ticks`, `fg_experiments`).
+* Audit trail persisted in PostgreSQL (`fg_audit`, `fg_decisions`, `fg_ticks`, `fg_experiments`).
 
 ## Assumptions & guardrails
 
@@ -132,7 +144,7 @@ recover. This was found (and fixed) through load testing; see `docs/LOAD_TEST.md
   `Dockerfile` builds the React console and the Python service into one image with a health check and a non-root user.
 * `docker compose --profile monitoring up` adds Prometheus (with alert rules in `deploy/alerts.yml`) and Grafana with
   a pre-provisioned dashboard (`deploy/grafana/dashboards/fuelgrid.json`).
-* `docker compose --profile localdb up` provides a local Postgres if Supabase is not available.
+* `docker compose up` also starts `db` (PostgreSQL 16 + pgvector, data in the `fuelgrid-pgdata` volume, healthy before FuelGrid starts). Any other Postgres works by setting `DATABASE_URL`.
 * CI (`.github/workflows/ci.yml`): lint, tests, type-check + frontend build, image build, container smoke test.
 * Build version (git SHA) is baked into the image and shown by `/api/health`.
 
@@ -159,7 +171,7 @@ departure tick, so shipments are not sent onto a road that is about to close.
 console over SSE, with replay of missed events after a reconnect (`Last-Event-ID`). Slow consumers lose their oldest
 events but can never block a publisher; the console treats events as hints and re-reads state over REST.
 
-## Incident memory (Supabase pgvector)
+## Incident memory (PostgreSQL pgvector)
 
 Each incident becomes a 12-number signature (type, time of day, service level, share of critical stations). Resolved
 incidents are stored in `fg_incident_memory` (`vector(12)`, HNSW index, cosine distance) with their outcome (duration,
@@ -203,7 +215,7 @@ topology changes at any time (stations, roads and depots can appear and disappea
   generated worlds (`app/worldgen/world.py`) with injected regime changes; cached in `backend/ml_data`.
 * **Evaluation** (`backtest.py`, `train.py`): walk-forward WAPE against naive, yesterday, moving-average and (on the
   simulator) a hand-set expert; interval coverage; permutation importance. Report: `docs/MODEL.md`.
-* **Lifecycle** (`manager.py`): champion loaded from Supabase or the bundled file; per-series online correction; unexplained-surge
+* **Lifecycle** (`manager.py`): champion loaded from the database or the bundled file; per-series online correction; unexplained-surge
   flag; drift-triggered or scheduled challenger training; champion/challenger gate on the most recent window (3% margin);
   registry with one-click rollback; cold-start fallback for short histories.
 * **Adaptation experiment** (`adapt.py`): same unseen world, same five surprises, five approaches, closed loop.
@@ -211,7 +223,7 @@ topology changes at any time (stations, roads and depots can appear and disappea
 ## Operator controls (`app/api/controls.py`)
 
 Declarative registry (type, range, default, group, help) rendered by the console. Server-side validation, audit of every change
-(old and new value), persistence in Supabase (`fg_settings`), emergency stop, per-shipment and per-cycle auto-approve limits,
+(old and new value), persistence in PostgreSQL (`fg_settings`), emergency stop, per-shipment and per-cycle auto-approve limits,
 minimum confidence and severity for automatic dispatch, optional API key on every write. After a restart auto-approve is left off.
 
 ## Pace: lock-step clock and cadence warning
