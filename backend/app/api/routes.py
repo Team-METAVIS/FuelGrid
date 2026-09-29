@@ -143,10 +143,38 @@ async def _admin(r, method, path, body=None):
         raise HTTPException(503, f"simulator admin unreachable: {e}") from None
 
 
+class ClockIn(BaseModel):
+    speed: float = 2.0
+
+
+@router.post("/sim/clock/start", dependencies=[Depends(guard)])
+async def clock_start(body: ClockIn, r=Depends(rt)):
+    """Lock-step clock: FuelGrid advances the simulator itself, planning every tick before taking the next."""
+    if r.client.kind != "simulator":
+        raise HTTPException(409, "the lock-step clock drives the simulator; switch to it first")
+    await r.clock.start(body.speed)
+    r.repo.audit(r.run_id, "scenario", f"Lock-step clock started at {r.clock.speed:g} ticks/s", "info")
+    return r.clock.status()
+
+
+@router.post("/sim/clock/stop", dependencies=[Depends(guard)])
+async def clock_stop(r=Depends(rt)):
+    await r.clock.stop()
+    r.repo.audit(r.run_id, "scenario", "Lock-step clock stopped", "info")
+    return r.clock.status()
+
+
+@router.get("/sim/clock")
+async def clock_status(r=Depends(rt)):
+    return r.clock.status()
+
+
 @router.post("/sim/{action}", dependencies=[Depends(guard)])
 async def sim_control(action: str, r=Depends(rt)):
     if action not in ("run", "pause", "step", "reset"):
         raise HTTPException(404)
+    if action in ("run", "pause") and r.clock and r.clock.running:
+        await r.clock.stop()  # two things must not fight over the simulated clock
     out = await _admin(r, "POST", f"/admin/{action}")
     r.repo.audit(r.run_id, "scenario", f"Simulator {action}")
     if action == "reset":

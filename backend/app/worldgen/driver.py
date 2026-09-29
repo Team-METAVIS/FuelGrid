@@ -1,5 +1,6 @@
 """Runs the independent world against a FeedSource inside the FuelGrid process (one click from the console)."""
 import asyncio
+import time
 
 from app.adapters.feed import FeedSource, TelemetryIn, TopologyIn
 from app.core.logging import get_logger
@@ -21,8 +22,9 @@ def push_tick(feed: FeedSource, world: World, orders: list[dict]) -> dict:
 
 
 class DemoWorld:
-    def __init__(self, feed: FeedSource):
+    def __init__(self, feed: FeedSource, after_tick=None):
         self.feed = feed
+        self.after_tick = after_tick  # awaited after every tick: lock-step, so the platform plans each tick before the next
         self.world = World()
         self.speed = 4.0
         self.running = False
@@ -45,8 +47,14 @@ class DemoWorld:
     async def _loop(self) -> None:
         try:
             while self.running:
+                t0 = time.perf_counter()
                 push_tick(self.feed, self.world, orders_for_world(self.feed))
-                await asyncio.sleep(1 / self.speed)
+                if self.after_tick is not None:
+                    try:
+                        await self.after_tick()
+                    except Exception as e:  # never let the platform's trouble stop the world
+                        log.warning("demo_after_tick_failed", error=str(e)[:100])
+                await asyncio.sleep(max(0.0, 1 / self.speed - (time.perf_counter() - t0)))
         except asyncio.CancelledError:
             pass
 

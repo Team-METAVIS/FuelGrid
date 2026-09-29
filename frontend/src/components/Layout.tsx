@@ -94,6 +94,12 @@ export default function Layout({ children }: { children: ReactNode }) {
             Degraded mode: simulator data is stale or unreachable. Recommendations use cached state and auto-execution is suspended until recovery.
           </div>
         )}
+        {state?.ready && state.instance.status === "RUNNING" && state.plan?.cadence_ticks != null && state.plan.cadence_ticks > Math.max(2 * state.settings.decision_every_ticks, 4) && (
+          <div className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800">
+            The world is moving faster than FuelGrid can plan (one plan every ~{state.plan.cadence_ticks} ticks), so shipments can arrive too late.
+            {state.source.kind === "simulator" ? " Use the lock-step clock on the Data sources page, or run the simulator more slowly." : " Slow the feed down or plan more often."}
+          </div>
+        )}
         {state?.settings.rolled_back && (
           <div className="flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800">
             <span>Automatic rollback: the optimizer failed repeatedly, so the simpler rule-based planner is active.</span>

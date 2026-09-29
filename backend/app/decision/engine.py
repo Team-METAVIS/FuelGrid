@@ -53,6 +53,7 @@ class DecisionEngine:
         self._seq = 0
         self.pred: dict[tuple[str, str, int], float] = {}
         self.ape_n = 0
+        self.cadence: float | None = None  # smoothed ticks between plans; > decision_every_ticks means the world outpaces planning
         self.raw_pred: dict[tuple[str, str, int], tuple[float, float | None]] = {}
         self.ape: deque[float] = deque(maxlen=300)
         self.last_cycle_ms = 0.0
@@ -71,6 +72,7 @@ class DecisionEngine:
         self.decisions.clear()
         self.history.clear()
         self.pred.clear()
+        self.cadence = None
         self.raw_pred.clear()
         manager.bias.clear()
         manager.over.clear()
@@ -118,6 +120,9 @@ class DecisionEngine:
                 log.exception("cycle_failed")
                 self.repo.audit(self.run_id, "alert", "Decision cycle failed", "error", snap.tick)
                 return None
+            if self.last_cycle_tick > -999 and snap.tick > self.last_cycle_tick:  # how many world ticks pass between plans
+                gap = snap.tick - self.last_cycle_tick
+                self.cadence = gap if self.cadence is None else 0.7 * self.cadence + 0.3 * gap
             self.last_cycle_tick = snap.tick
             self.plan = plan
             self._policy_guard(plan, snap)

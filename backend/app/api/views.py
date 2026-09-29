@@ -94,7 +94,8 @@ def _build_body(rt, snap) -> dict:
         "incidents": [{"key": k, **{a: b for a, b in v.items() if not a.startswith("_")}} for k, v in eng.incidents.items()],
         "plan": {"policy": plan.policy, "solver_status": plan.solver_status, "runtime_ms": round(plan.runtime_ms, 1),
                  "fallback_used": plan.fallback_used, "fallback_reason": plan.fallback_reason, "tick": plan.tick,
-                 "notes": plan.notes, "forecast_model": plan.forecast_model, "comparison": plan.comparison} if plan else None,
+                 "notes": plan.notes, "forecast_model": plan.forecast_model, "comparison": plan.comparison,
+                 "cadence_ticks": round(eng.cadence, 1) if eng.cadence is not None else None} if plan else None,
         "settings": settings_view(rt),
         "source": {"kind": rt.client.kind, "label": rt.client.label, "supports_admin": rt.client.supports_admin},
     }

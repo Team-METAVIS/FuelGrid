@@ -23,6 +23,7 @@ from app.decision.engine import DecisionEngine
 from app.intelligence.llm import LlmRouter
 from app.ml.manager import manager
 from app.simulator.client import SimulatorClient
+from app.state.clock import LockStepClock
 from app.state.store import StateStore
 from app.state.sync import Synchronizer
 from app.worldgen.driver import DemoWorld
@@ -46,6 +47,7 @@ class Runtime:
     sim: SimulatorClient
     feed: FeedSource
     demo: DemoWorld | None = None
+    clock: LockStepClock | None = None
 
 
 def build_runtime(cfg: Settings, api_stats: ApiStats) -> Runtime:
@@ -65,7 +67,9 @@ def build_runtime(cfg: Settings, api_stats: ApiStats) -> Runtime:
     manager.audit = lambda kind, msg, sev="info": repo.audit(run_id, kind, msg, sev)
     manager.bus = bus
     llm = LlmRouter(cfg.gemini_api_key, cfg.groq_api_key, cfg.llm_timeout_s)
-    return Runtime(cfg, client, store, sync, repo, engine, api_stats, run_id, bus, llm, sim, feed)
+    rt = Runtime(cfg, client, store, sync, repo, engine, api_stats, run_id, bus, llm, sim, feed)
+    rt.clock = LockStepClock(sim, sync)
+    return rt
 
 
 async def switch_source(rt: Runtime, kind: str) -> None:
@@ -73,6 +77,8 @@ async def switch_source(rt: Runtime, kind: str) -> None:
     if rt.client.kind == kind:
         return
     await rt.sync.stop()
+    if rt.clock:
+        await rt.clock.stop()
     new = rt.feed if kind == "feed" else rt.sim
     rt.client = rt.sync.client = rt.engine.client = new
     rt.cfg.data_source = kind
@@ -94,6 +100,7 @@ async def start_demo(rt: Runtime, seed: int, speed: float) -> None:
     await switch_source(rt, "feed")
     if rt.demo is None:
         rt.demo = DemoWorld(rt.feed)
+    rt.demo.after_tick = rt.sync.refresh
     await rt.demo.start(seed, speed)
     rt.repo.audit(rt.run_id, "scenario", f"Independent demo world started (seed {seed}, {rt.demo.speed:g} ticks/s)", "info")
     rt.sync.trigger.set()
@@ -119,6 +126,8 @@ def create_app(cfg: Settings | None = None, start_background: bool = True) -> Fa
         yield
         if rt.demo:
             await rt.demo.stop()
+        if rt.clock:
+            await rt.clock.stop()
         await rt.sync.stop()
         await rt.sim.aclose()
         await rt.feed.aclose()

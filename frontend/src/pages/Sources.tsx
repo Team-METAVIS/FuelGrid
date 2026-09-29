@@ -37,10 +37,12 @@ export default function Sources() {
   const [src, setSrc] = useState<any>(null);
   const [feed, setFeed] = useState<any>(null);
   const [seed, setSeed] = useState(7);
-  const [speed, setSpeed] = useState(4);
+  const [speed, setSpeed] = useState(2);
+  const [clock, setClock] = useState<any>(null);
+  const [cspeed, setCspeed] = useState(2);
 
   useEffect(() => {
-    const load = () => { get("/api/source").then(setSrc).catch(() => undefined); get("/api/feed/status").then(setFeed).catch(() => undefined); };
+    const load = () => { get("/api/source").then(setSrc).catch(() => undefined); get("/api/feed/status").then(setFeed).catch(() => undefined); get("/api/sim/clock").then(setClock).catch(() => undefined); };
     load();
     const id = setInterval(load, 2500);
     return () => clearInterval(id);
@@ -77,6 +79,18 @@ export default function Sources() {
             <Button icon={<SkipForward size={14} />} onClick={() => act("/api/sim/step", undefined, "Stepped one tick")}>Step</Button>
             <Button variant="danger" icon={<RotateCcw size={14} />} onClick={() => confirm("Reset the simulation to tick 0?") && act("/api/sim/reset", undefined, "Simulation reset")}>Reset</Button>
           </div>
+          <div className="mt-4 rounded-lg border border-slate-200 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-sm font-medium text-slate-800">Lock-step clock <span className="font-normal text-slate-500">(recommended)</span></div>
+              {clock?.running ? <Badge tone="green">running · {clock.speed} ticks/s · {clock.steps} steps</Badge> : <Badge>stopped</Badge>}
+              <label className="ml-auto text-xs text-slate-600">{cspeed} ticks/s<input type="range" min={1} max={12} value={cspeed} onChange={(e) => setCspeed(+e.target.value)} className="ml-2 w-28 align-middle accent-indigo-600" /></label>
+              {!clock?.running
+                ? <Button size="sm" variant="primary" icon={<Play size={13} />} onClick={() => act("/api/sim/clock/start", { speed: cspeed }, "Lock-step clock started")}>Start</Button>
+                : <Button size="sm" variant="danger" icon={<Square size={12} />} onClick={() => act("/api/sim/clock/stop", undefined, "Lock-step clock stopped")}>Stop</Button>}
+            </div>
+            <p className="mt-2 text-xs text-slate-500">FuelGrid advances the simulator itself: step, read, plan, repeat. Every tick is planned before the next one starts, so the platform can never fall behind. The simulator's own Run mode ticks at a fixed speed regardless of planning.</p>
+            {clock?.last_error && <p className="mt-1 text-xs text-amber-700">Last issue: {clock.last_error}</p>}
+          </div>
           <p className="mt-2 text-xs text-slate-500">Crisis and fault injection live on the Scenarios &amp; Chaos page.</p>
         </Card>
       )}
@@ -86,12 +100,14 @@ export default function Sources() {
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-xs text-slate-600">Seed<input type="number" value={seed} onChange={(e) => setSeed(+e.target.value)} className="tabular ml-2 w-20 rounded-md border border-slate-300 px-2 py-1 text-sm" /></label>
           <label className="text-xs text-slate-600">Speed {speed} ticks/s<input type="range" min={1} max={30} value={speed} onChange={(e) => setSpeed(+e.target.value)} className="ml-2 w-32 align-middle accent-indigo-600" /></label>
+          <Button size="sm" variant="secondary" onClick={() => act("/api/controls", { values: { auto_execute: !s.settings.auto_execute } }, s.settings.auto_execute ? "Auto-approve off" : "Auto-approve on")}>{s.settings.auto_execute ? "Auto-approve: ON" : "Auto-approve: off"}</Button>
           {!demo?.running
             ? <Button variant="primary" icon={<PlugZap size={14} />} onClick={() => act("/api/feed/demo/start", { seed, speed }, "Demo world started; switched to the live feed")}>Start demo world</Button>
             : <Button variant="danger" icon={<Square size={13} />} onClick={() => act("/api/feed/demo/stop", undefined, "Demo world stopped")}>Stop</Button>}
         </div>
         {demo?.running && (
           <>
+            {!s.settings.auto_execute && s.recommendations.length > 0 && <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">Nothing is being dispatched: recommendations wait for approval. Approve them on the Decisions page or switch auto-approve on here to watch the loop run by itself.</p>}
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[["World service level", pct(demo.service_level, 1)], ["Unmet (truth)", `${n0(demo.truth_unmet_l)} L`], ["Demand level", `×${demo.level}`], ["Stations", demo.stations]].map(([k, v]) => (
                 <div key={k as string} className="rounded-lg border border-slate-200 p-3"><div className="text-[11px] text-slate-500">{k}</div><div className="tabular text-lg font-semibold text-slate-900">{v}</div></div>
