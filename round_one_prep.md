@@ -213,6 +213,7 @@ Training takes about 22 seconds. Model file: 600 KB, stored in the repository an
 | Model controls | Demand model choice, online adaptation, auto-retrain, schedule, retrain now, activate any version |
 | Resilience thresholds | Stale-data limit, rollback threshold |
 | Data source | Switch source, run the demo world, change it while running |
+| Lock-step clock | FuelGrid advances the simulator itself (step, read, plan, repeat) so it never falls behind; a banner warns if the world outpaces planning |
 | Operator API key | Optional; protects every write action (reading stays open) |
 
 Every control is validated on the server (bad values are refused), written to the audit log with old and new value, and **saved in Supabase** so it survives a restart. After a restart, **auto-approve is deliberately left off** and the log says so.
@@ -244,7 +245,7 @@ Every control is validated on the server (bad values are refused), written to th
 
 - **Observability:** Prometheus metrics (request rate/latency/errors, source health, breaker, fallbacks, open alerts, forecast error and confidence, model retrains, allocations, service level, database), structured logs, a health page, ready-made Grafana dashboard and alert rules.
 - **Deployment:** `docker compose up --build` (simulator + FuelGrid); optional profiles for Prometheus/Grafana and a local database; multi-stage image with health check and non-root user; CI runs lint, tests, front-end build, image build and a start-up smoke test.
-- **Testing:** 87 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
+- **Testing:** 90 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
 
 ---
 
@@ -311,9 +312,13 @@ Honest reading: doing nothing fails; both smart policies handle normal and mediu
 
 **How do you handle bad sensor data?** Reject impossible values, clamp and flag suspicious ones, carry forward silent sensors, mark a silent feed stale, show a quality score (Section 7, layer 5).
 
+**What if the world moves faster than you can plan?** Each plan can send one shipment per road and fuel, so planning less often than the world moves starves stations (we measured it: at 8 ticks per second a plan every ~4 ticks left the demo world at ~50% service, at 2 ticks per second it held 99.9%). FuelGrid therefore tracks the planning cadence and warns, and offers a lock-step clock that advances the simulated time itself so every tick is planned before the next starts.
+
 **Who is in control?** The person. Auto-approve is off by default, bounded by budget, shipment size, confidence and severity, suspended on stale data, off again after a restart, with one-button emergency stop and full audit.
 
 **How do you prevent AI hallucination?** Answers are built from live data; an optional language model may only reword them, and any reply with a number not in the data is discarded.
+
+**Does it run in a container?** Yes: `docker compose up --build`; we verified the image starts healthy, loads the bundled trained model, and runs the demo world on an unseen 8-station network.
 
 **What are the weaknesses?** Training data is simulated; the world is small and regular so real results would be messier; planning once every several hours is throughput-limited (one shipment per road and fuel per plan); a single process is the ceiling at about 160 requests/s; the sim-only model is over-confident on other networks until retrained.
 

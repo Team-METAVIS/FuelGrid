@@ -3,6 +3,8 @@
 Tool: [Locust](https://locust.io). Script: `loadtest/locustfile.py`. Re-run everything with `bash loadtest/run.sh`
 (summary tables: `python loadtest/summarize.py`). Raw CSV output: `loadtest/results/`.
 
+> Load figures were measured with the simulator ticking live. Later additions (trained model, live feed, controls) do not sit on the hot read path; the model forecast runs once per planning cycle (a few milliseconds for the whole network).
+
 ## What was tested
 
 The simulator was **running live (8 ticks per second)** during both runs, so background sync, forecasting and decision

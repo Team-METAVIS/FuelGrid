@@ -5,7 +5,7 @@ question: *does it make the operators' decisions better or the system more trust
 
 | Optional item | Status | Where / why |
 |---|---|---|
-| Optimization + ML hybrid | **Built** | A learned demand forecast (`seasonal-events-v2`) feeds an exact optimizer (OR-Tools). Forecast v2 cut error on the combined crisis from 7.5% to 6.0% and reached the same service level while shipping about 30% less fuel on the demand-spike scenario. |
+| Optimization + ML hybrid | **Built** | A trained quantile demand model (gradient boosting, uncertainty band) feeds an exact optimizer (OR-Tools); the band sets the safety buffer. Forecast v2 cut error on the combined crisis from 7.5% to 6.0% and reached the same service level while shipping about 30% less fuel on the demand-spike scenario. |
 | Uncertainty-aware allocation | **Built** | Every need includes a safety buffer of `safety_z` standard deviations of forecast error; low confidence forces human review. `docs/TUNING.md` shows the effect of the buffer. |
 | Counterfactual simulation | **Built** | Each cycle rolls forward "do nothing", the active policy and the other policy on the same state (Overview, live). The Forecast page also shows inventory with and without pending shipments. |
 | Automated incident detection | **Built** | Road, station, depot, delivery, demand-anomaly and model-drift incidents are detected and logged, with recovery tracking. |
@@ -15,10 +15,12 @@ question: *does it make the operators' decisions better or the system more trust
 | Event-driven architecture | **Built** | In-process event bus (`app/core/events.py`); the engine, sync layer and audit trail publish, the live UI stream subscribes with replay after reconnect. |
 | Streaming | **Built** | Server-sent events push decisions, alerts, and link changes to the console as they happen. |
 | Generative-AI operations assistant | **Built, safely** | `/api/assistant` answers from live data. Free-tier language models (Gemini with automatic model discovery and rotation, Groq as backup) may only reword the answer; any reply containing a number not in the data is discarded and the next model is tried. It cannot act. Works fully with no key. |
+| Continuous learning (champion / challenger) | **Built** | Drift or schedule triggers a challenger; it replaces the trained champion only if it beats it by 3% on the most recent window; versions kept for one-click rollback (`docs/ADAPTATION.md`). |
+| Data-source independence | **Built** | Canonical model, simulator and live-feed adapters, independent generated world, live source switching (`docs/ARCHITECTURE.md`). |
 | Simulation replay | **Built** | Replay page scrubs through any recorded run (fuel levels, decisions, incidents). |
 | Experiment tracking, model versioning | **Built** | `fg_experiments` table, model registry with one-click activation, tuning sweep (`docs/TUNING.md`). |
 | Reinforcement learning | **Not built, on purpose** | Each planning step is a small, exactly solvable problem, so an exact optimizer is already optimal for it. RL would need a training loop against a slow simulator and would have to beat a strong baseline to justify itself; we have no evidence it could. The organizers ask for that comparison if RL is used. |
 | Multi-agent decision systems | **Not built, on purpose** | With 2 depots and 4 stations one solver sees the whole problem. Splitting it into negotiating agents would add failure modes and lose optimality. |
 | Kubernetes, autoscaling | **Not built, on purpose** | The load test shows one process handles about 160 requests/s with zero errors, far above any operations room. Docker Compose with health checks is the right size. The scaling path is described in `docs/LOAD_TEST.md`. |
 
-Everything built is covered by automated tests (50 and counting) and listed in the round-one notes.
+Everything built is covered by automated tests (90) and listed in the round-one notes.

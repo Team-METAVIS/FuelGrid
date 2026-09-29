@@ -181,3 +181,42 @@ Benchmarks and parameter sweeps are recorded in `fg_experiments` and summarised 
 `docs/TUNING.md`. The Forecast & Models page shows the model registry (activate/rollback), sweep results and history.
 
 See `docs/OPTIONAL_FEATURES.md` for the status of every optional item, including what was deliberately left out.
+
+## Source independence: canonical model and adapters
+
+`app/domain` holds the canonical model (fuels are plain strings; simulator-only facts are optional) and the errors every
+adapter raises. `app/adapters/base.py` defines the `DataSource` contract. Two adapters implement it:
+`SimulatorClient` (REST + SSE, retry, circuit breaker, concurrency cap) and `FeedSource` (generic live feed: topology and
+telemetry in over HTTP, dispatch orders out by pull or webhook). Nothing above the adapters names a station, product or
+region. The runtime can switch source live (`POST /api/source`).
+
+`FeedSource` validates every reading (rejects impossible or unknown values, clamps and flags over-capacity, flags demand
+outliers and large jumps, carries forward silent sensors, refuses out-of-order batches), tracks a data-quality score, accepts
+topology changes at any time (stations, roads and depots can appear and disappear) and reports itself stale when it goes quiet.
+
+## The trained demand model (`app/ml`)
+
+* **Features** (`features.py`): 18 source-neutral signals, demand normalised by a per-series scale so one pooled model serves
+  every station and fuel and can start on a station it has never seen.
+* **Model** (`model.py`): three `HistGradientBoostingRegressor`s with quantile loss (p10, p50, p90); horizons 1-32.
+* **Data** (`datasets.py`, `collect.py`): the simulator driven through five scenarios by its admin API, plus four independent
+  generated worlds (`app/worldgen/world.py`) with injected regime changes; cached in `backend/ml_data`.
+* **Evaluation** (`backtest.py`, `train.py`): walk-forward WAPE against naive, yesterday, moving-average and (on the
+  simulator) a hand-set expert; interval coverage; permutation importance. Report: `docs/MODEL.md`.
+* **Lifecycle** (`manager.py`): champion loaded from Supabase or the bundled file; per-series online correction; unexplained-surge
+  flag; drift-triggered or scheduled challenger training; champion/challenger gate on the most recent window (3% margin);
+  registry with one-click rollback; cold-start fallback for short histories.
+* **Adaptation experiment** (`adapt.py`): same unseen world, same five surprises, five approaches, closed loop.
+
+## Operator controls (`app/api/controls.py`)
+
+Declarative registry (type, range, default, group, help) rendered by the console. Server-side validation, audit of every change
+(old and new value), persistence in Supabase (`fg_settings`), emergency stop, per-shipment and per-cycle auto-approve limits,
+minimum confidence and severity for automatic dispatch, optional API key on every write. After a restart auto-approve is left off.
+
+## Pace: lock-step clock and cadence warning
+
+The simulator's Run mode ticks at a fixed speed regardless of planning. `LockStepClock` has the platform advance the simulator
+itself (step, read, plan). The demo world runs lock-step the same way. The engine tracks ticks between plans and the console warns
+when the world outpaces planning.
+

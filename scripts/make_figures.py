@@ -119,6 +119,7 @@ def adaptation() -> None:
         ax.set_xlabel("Ticks since go-live")
         ax.set_ylabel(lab)
     axes[1].set_ylim(60, 100.5)
+    axes[1].text(360, 82, "All five approaches overlap at about 99.98%:\nhourly re-planning from measured stock\nabsorbs forecast error", ha="center", fontsize=9, color="#334155")
     axes[0].legend(fontsize=7.5, loc="upper left")
     fig.suptitle("Coping with a changing world: same network, same surprises, five ways of forecasting", fontsize=11.5, fontweight="bold")
     save(fig, "adaptation.png")
