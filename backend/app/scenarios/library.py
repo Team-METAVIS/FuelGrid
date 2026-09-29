@@ -26,6 +26,14 @@ SCENARIOS: dict[str, dict] = {
             {"type": "supply_shortfall", "start_tick": 60, "duration_ticks": 4, "parameters": {"factor": 0.5}},
         ],
     },
+    "depot_constraint": {
+        "title": "Depot constraint (Gazipur)",
+        "description": "Gazipur depot is constrained for 6 hours and its incoming supply is cut to 40%, so stations it serves must be covered from Patiya.",
+        "events": [
+            {"type": "depot_constraint", "start_tick": 16, "duration_ticks": 24, "parameters": {"depot_ids": ["depot-gazipur"]}},
+            {"type": "supply_shortfall", "start_tick": 16, "duration_ticks": 4, "parameters": {"factor": 0.4, "depot_ids": ["depot-gazipur"]}},
+        ],
+    },
     "combined_crisis": {
         "title": "Combined crisis",
         "description": "Demand spike + route disruption + depot constraint + shipment delay at once.",

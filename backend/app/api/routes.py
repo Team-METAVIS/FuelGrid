@@ -121,14 +121,14 @@ async def cycle_now(r=Depends(rt)):
 # ---- scenario / chaos console (proxy to simulator admin; self-test only) ----
 class EventIn(BaseModel):
     type: str
-    start_tick: int | None = None
+    start_tick: int | None = Field(None, ge=0)
     duration_ticks: int = Field(12, ge=1, le=10_000)
     parameters: dict = {}
 
 
 class FaultIn(BaseModel):
     type: str
-    duration_seconds: int = 30
+    duration_seconds: int = Field(30, gt=0, le=3600)  # simulator guide 7.9: 0 < x <= 3600
     parameters: dict = {}
 
 
