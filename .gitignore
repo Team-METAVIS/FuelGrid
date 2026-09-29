@@ -17,3 +17,7 @@ loadtest/results/DONE
 sweep.log
 bench4*.log
 sweep2.log
+collect.log
+train.log
+adapt.log
+*.log

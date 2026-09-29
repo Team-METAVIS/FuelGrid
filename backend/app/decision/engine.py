@@ -8,13 +8,15 @@ from app.core import metrics as m
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.db.repo import Repo
+from app.domain import models as M
+from app.domain.errors import AllocationRejected, SimulatorError, SimulatorUnavailable
 from app.intelligence import planner
 from app.intelligence.memory import IncidentMemory, signature
 from app.intelligence.policies.common import precheck
+from app.intelligence.projection import SEV_ORDER
 from app.intelligence.types import Plan, Recommendation
-from app.simulator import models as M
+from app.ml.manager import manager
 from app.simulator.client import SimulatorClient
-from app.simulator.errors import AllocationRejected, SimulatorError, SimulatorUnavailable
 from app.state.store import Snapshot, StateStore
 
 log = get_logger("decision")
@@ -50,6 +52,8 @@ class DecisionEngine:
         self.cycle_lock = asyncio.Lock()
         self._seq = 0
         self.pred: dict[tuple[str, str, int], float] = {}
+        self.ape_n = 0
+        self.raw_pred: dict[tuple[str, str, int], tuple[float, float | None]] = {}
         self.ape: deque[float] = deque(maxlen=300)
         self.last_cycle_ms = 0.0
         self.timeline: deque[dict] = deque(maxlen=600)
@@ -67,6 +71,10 @@ class DecisionEngine:
         self.decisions.clear()
         self.history.clear()
         self.pred.clear()
+        self.raw_pred.clear()
+        manager.bias.clear()
+        manager.over.clear()
+        manager.last_train_tick = -10**9
         self.ape.clear()
         self.timeline.clear()
         self.incidents = {}
@@ -121,9 +129,12 @@ class DecisionEngine:
             degraded = snap.stale or snap.age_s() > self.cfg.stale_after_s
             if self.cfg.auto_execute and not degraded:
                 budget = self.cfg.max_auto_liters
+                floor = SEV_ORDER.get(self.cfg.auto_min_severity, 0)
                 for d in new:
                     if d.rec.requires_review or d.rec.quantity > budget:
                         continue
+                    if d.rec.quantity > self.cfg.auto_max_single_l or SEV_ORDER.get(d.rec.severity, 0) < floor:
+                        continue  # outside the auto-approval rules: waits for a person
                     budget -= d.rec.quantity
                     d.actor = "auto"
                     await self._execute(d, snap)
@@ -133,6 +144,9 @@ class DecisionEngine:
             m.CYCLE_LATENCY.observe(self.last_cycle_ms / 1000)
             m.CYCLES.labels(plan.policy, "fallback" if plan.fallback_used else "ok").inc()
             self._update_gauges(plan)
+            why = manager.due(snap.tick, self.cfg, drift="model-drift" in self.incidents)
+            if why and not self.bench:  # continuous learning: retrain in the background, promote only on a clear win
+                self._spawn(manager.retrain(self.store, snap, why))
             self.repo.tick_row(self.run_id, snap.tick, snap.metrics.service_level, snap.metrics.unmet_demand_liters,
                                {"stations": {s.id: s.inventory for s in snap.stations.values()},
                                 "depots": {d.id: d.inventory for d in snap.depots.values()},
@@ -268,16 +282,26 @@ class DecisionEngine:
     def _track_predictions(self, snap: Snapshot, plan: Plan):
         for (sid, fuel), yhat in plan.pred1.items():
             self.pred[(sid, fuel, snap.tick + 1)] = yhat
+        for (sid, fuel), raw in plan.raw1.items():
+            self.raw_pred[(sid, fuel, snap.tick + 1)] = raw
 
     def _score_forecasts(self):
         snap = self.store.snapshot
         if not snap:
             return
+        for (sid, fuel, t), (raw, hi) in list(self.raw_pred.items()):  # the learned model adapts to what actually happened
+            actual = self.store.demand.get((sid, fuel), {}).get(t)
+            if actual is not None:
+                manager.observe(sid, fuel, raw, hi, actual[0], adapt=self.cfg.online_adaptation)
+                del self.raw_pred[(sid, fuel, t)]
+            elif t < snap.tick - 5:
+                del self.raw_pred[(sid, fuel, t)]
         for (sid, fuel, t), yhat in list(self.pred.items()):
             actual = self.store.demand.get((sid, fuel), {}).get(t)
             if actual is not None:
                 if actual[0] > 1:
                     self.ape.append(abs(actual[0] - yhat) / actual[0])
+                    self.ape_n += 1  # total ever recorded (the deque is bounded)
                 del self.pred[(sid, fuel, t)]
             elif t < snap.tick - 5:
                 del self.pred[(sid, fuel, t)]

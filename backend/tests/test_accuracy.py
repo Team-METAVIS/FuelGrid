@@ -1,7 +1,7 @@
+from app.domain import models as M
 from app.intelligence import planner
 from app.intelligence.forecast import event_multiplier, seasonal_forecast, seasonal_v1_forecast
 from app.intelligence.policies.common import precheck, usable_routes
-from app.simulator import models as M
 from tests.conftest import disruption, make_snapshot, spike
 
 LOW = {"station-mirpur": (300, 9000, 5000)}

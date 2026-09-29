@@ -1,320 +1,355 @@
 # FuelGrid — Round One Preparation
 
-Round one is about showing that we understand the problem and can give a sensible, practical answer. This page
-explains what we are building, why it is better than the obvious approach, and the questions the judges are likely to
-ask. It is written in plain words on purpose.
+Use this page to explain FuelGrid to anyone: what it does, how every part works inside, how decisions are made, how the model was trained and on what data, and how it copes with a changing world. Plain words first; the technical detail is there when a judge digs in. A glossary is at the end.
 
-> Everything below has been built and tested against the organizers' simulator. Numbers come from our own runs; the
-> raw results are in `docs/BENCHMARK.md`, `docs/TUNING.md` and `docs/LOAD_TEST.md`.
+> Everything here is built and tested. Numbers come from our own runs; raw results are in `docs/BENCHMARK.md`, `docs/MODEL.md`, `docs/ADAPTATION.md`, `docs/TUNING.md` and `docs/LOAD_TEST.md`. Diagrams and graphs are in the `README.md`.
+
+---
+
+## 0. The four questions judges asked, answered up front
+
+| Judges' question | Short, true answer |
+|---|---|
+| **"Did you train a model?"** | **Yes.** A gradient-boosted quantile model (scikit-learn), trained on 188 demand series / 226,560 observations from two very different environments, evaluated walk-forward against simple baselines, versioned in a registry, and retrained automatically. It does **not** read the simulator's published demand pattern. (Section 6) |
+| **"Real situations are dynamic. How does mathematics cope?"** | Four layers. (1) The optimizer **re-solves from the live measured state every cycle**, so nothing stale is trusted. (2) The model **adapts online** within a few ticks of a level shift. (3) **Drift** is detected, a challenger model is trained and only replaces the champion if it is clearly better on recent data. (4) Every part of the network (stations, roads, fuels) is data, so the world can **change while running**. (Section 7) |
+| **"Is it using the simulator? Is it tied to it?"** | The simulator is **one adapter of two**. The core works on a canonical data model. A second adapter, the **live feed**, lets any system push topology and telemetry over HTTP and pull dispatch orders back. We proved it on an independent generated network with different topology, four fuels (including LPG), a different clock, weekly seasonality and injected shocks. One click switches sources. (Section 8) |
+| **"If it's maths, how does it handle dynamic things?"** | Same as row 2, plus: maths gives the *decision*, learning gives the *inputs*. The demand the optimizer plans against is learned from data and corrected online; the constraints it obeys (roads, stock, capacity) are re-read every cycle. (Sections 5 and 7) |
 
 ---
 
 ## 1. The problem in plain words
 
-A country has a few fuel depots and many fuel stations. Trucks carry fuel from depots to stations along fixed roads.
-Things go wrong: a road closes, a shipment arrives late, a city suddenly needs more fuel, a station shuts down. If
-nobody reacts in time, a station runs dry and customers go without fuel.
+A country has fuel depots and fuel stations; trucks carry fuel along fixed roads. Things go wrong: a road closes, a delivery is late, a city suddenly needs more fuel, a station shuts. If nobody reacts in time, a station runs dry.
 
-The people running the operation need a screen that answers five questions:
+The operations team needs a screen that answers: *What is the situation? Where will fuel run out and how sure are we? What should we send, from where, how much? What happens if we do? Is the system itself healthy?*
 
-1. What is the situation right now?
-2. Where will fuel run out soon, and how sure are we?
-3. What should we send, from where, and how much?
-4. What happens if we do that?
-5. Is the system itself working properly?
-
-The organizers gave us a practice world (a simulator) with 2 depots, 4 stations, 6 roads and 3 fuels (diesel, petrol,
-octane). Time moves in 15-minute steps. We may change only one thing in it: create a shipment.
+The organizers provide a practice world (a simulator): 2 depots, 4 stations, 6 roads, 3 fuels, time in 15-minute steps, and exactly one write action — create a shipment.
 
 ---
 
-## 2. What we are building
+## 2. What FuelGrid is
 
-**FuelGrid** is an operations screen plus the "brain" behind it. Every time the simulated clock moves forward:
+An operations console plus the decision "brain" behind it. Every time the clock ticks it runs:
 
-| Step | What it means in plain words |
-|---|---|
-| Observe | Read the latest fuel levels, roads, deliveries, announced events and demand from the simulator |
-| Detect | Spot problems: a closed road, a late delivery, a sudden jump in demand |
-| Predict | Estimate how much fuel each station will need over the next 8 hours |
-| Decide | Work out the best shipments, respecting every real limit (truck size, depot stock, tank space) |
-| Simulate | Before acting, calculate what the shipment would change, so the operator sees the benefit |
-| Act | Check the shipment against the simulator's rules, then send it, but only after a person approves (or automatic mode is switched on) |
-| Monitor | Check the result, keep score, and watch our own system's health |
-| Recover | If something breaks, switch to a simpler backup and carry on |
+| Step | Plain meaning | Which engine does it |
+|---|---|---|
+| Observe | Read fuel levels, roads, deliveries, events, demand | Data-source adapter + synchronizer |
+| Detect | Spot closures, delays, surges, model drift | Incident detector |
+| Predict | Estimate demand for the next 32 steps with an uncertainty band | Forecast engine (trained model) |
+| Assess | Roll stock forward, work out when and how likely a station runs out | Risk engine |
+| Decide | Choose the best shipments under every real limit | Planner + optimizer (OR-Tools) |
+| Simulate | Show what the plan changes, and compare with doing nothing | Impact and shadow-comparison engine |
+| Act | Check against the simulator's own rules, then send after approval | Decision engine + executor |
+| Monitor | Score, health, alerts, audit | Metrics, health, audit log |
+| Recover | Fall back, retry, roll back, relearn | Resilience layer + model manager |
 
-### The screens (light, clean, one job per page)
-
-| Page | What the operator sees |
-|---|---|
-| **Overview** | A written situation briefing, service level, stations at risk, waiting decisions, incidents (with similar past cases), a live "do nothing vs simple rules vs our planner" comparison, and a live activity feed |
-| **Network** | A map of depots, roads and stations, colored by problems, plus every fuel level and shipment |
-| **Decisions** | Each recommendation with reasons, rejected alternatives and Approve / Reject; full history below |
-| **Forecast and Models** | Expected demand with a "how unsure are we" band, projected fuel level (with and without pending shipments), model versions you can switch between, tuning results, experiment history |
-| **Scenarios and Chaos** | Buttons to create a crisis or break our own system on purpose, for the live demo |
-| **Ops assistant** | Ask questions in plain language ("why is Mirpur diesel low?"); answers come from live data |
-| **Replay** | Scrub through any recorded run: fuel levels, decisions and incidents as they happened |
-| **System health** | Database, simulator link, response speed, error rate, what the system does when something breaks |
-| **Audit log** | A permanent record of every alert, recovery, fallback and operator action |
-
-Everything updates by itself: the server pushes each change (a new recommendation, an alert, a recovery) to the screen
-the moment it happens. Approving or rejecting a recommendation removes it at once.
+Screens: Overview (briefing, risks, comparison, live feed), Network, Decisions, Controls, Forecast & Models, Scenarios & Chaos, Ops assistant, Replay, Data sources, System health, Audit log.
 
 ---
 
-## 3. How we are making it a better system
+## 3. Inside the system: the engines and how they work together
 
-### a) It predicts demand more accurately, using information the simulator already gives
-The simulator publishes each region's demand factor and a list of announced events (for example, "demand spike in Dhaka
-from tick 24 to 40"). FuelGrid uses them, so it expects the jump when it is announced and expects it to end, instead of
-noticing a few steps late. Compared with our first version, forecast error on the combined crisis fell from 7.5% to
-6.0%, and in the demand-spike test we reached the same 100% service while sending about 30% less fuel. Typical
-one-step error is now about 5%.
+```
+ DATA SOURCES            CORE (source-independent)                                 OUTPUTS
+ ─────────────      ─────────────────────────────────────────────────────    ────────────────
+ Simulator adapter ┐                                                          Operator console
+                   ├─► Canonical model ─► State store ─► Forecast ─► Risk ─►  (live via SSE)
+ Live-feed adapter ┘   (fuels are text)     (snapshot,    engine      engine        │
+   ▲ topology/telemetry                      demand                       │         ▼
+   │ in; orders out                          history)          Planner + optimizer ─► Decision engine ─► Orders
+   │                                                              (OR-Tools, fallback)    (approve, precheck,   to source
+   │                                                                                       audit)
+   └── Model manager: online adaptation · drift · retrain · champion/challenger · rollback
+       Supabase: decisions, audit, ticks, experiments, incident memory (pgvector), models, settings
+```
 
-### b) It writes its own briefing and answers questions
-The top of the Overview says, in plain sentences, what matters right now. The Ops assistant answers questions about
-stations, risks, recommendations, incidents and system health. Both are built from the live numbers only, so they cannot
-make something up, and they work with no outside AI service. If free AI keys are added (Google Gemini first, Groq as
-backup), a language model may reword the answer to make it friendlier. FuelGrid discovers which free models are
-available, rotates to the next one when a model is busy, and throws away any reply that contains a number not found in
-the real data. The assistant can only explain; it can never approve or change anything.
+| Engine | What it is | Inputs | Output | Technique |
+|---|---|---|---|---|
+| **Data-source adapters** | Translators from any source into one canonical model | Simulator REST + SSE, or the live feed API | Snapshot: stations, depots, routes, arrivals, events, shipments, demand history | HTTP client with retry, breaker, validation; feed adapter with quality scoring |
+| **Synchronizer + store** | Keeps the freshest known world in memory | Adapter reads (about twice a second) | Latest snapshot + accumulated demand history | REST is truth, push events are only hints; single-flight refresh; reset detection |
+| **Forecast engine** | Predicts demand per station and fuel | Demand history, clock, announced events | Median forecast, 10th and 90th percentile per step, confidence | **Trained gradient-boosted quantile model**, online correction, fallbacks |
+| **Risk engine** | Turns forecast into shortage risk | Stock, in-flight shipments, forecast | Hours to stock-out, probability, severity per station and fuel | Deterministic roll-forward + normal-error model |
+| **Incident detector** | Notices trouble | Events, statuses, delays, model error | Incidents with start and recovery | Rules on live state; model surge and drift signals |
+| **Planner + optimizer** | Chooses the shipments | Needs, routes, depot stock, limits | A set of (route, fuel, liters) | **Integer optimization (OR-Tools CP-SAT)**, rule-based fallback |
+| **Impact engine** | Explains what a plan does | Plan, forecast | Risk and unmet demand before/after, alternatives, "do nothing / rules / optimizer" comparison | Counterfactual roll-forward |
+| **Decision engine** | Runs the workflow | Plan | Stable proposals, approvals, executed shipments, audit | Reconciliation, review gate, auto-approve rules, precheck, idempotent execution |
+| **Model manager** | Owns the model's life | Live history, errors | Champion model, retrain results, versions | Online bias, drift trigger, champion/challenger gate, registry |
+| **Event bus + stream** | Pushes changes to the screen | Every decision, alert, link change | Live UI updates | In-process publish/subscribe, server-sent events, replay after reconnect |
+| **Incident memory** | "Seen this before?" | Incident signature | Closest past cases and outcomes | Supabase pgvector similarity (12 numbers) |
+| **Assistant + briefing** | Plain-language answers | Live facts | Sentences | Templates from data; optional Gemini/Groq rewording with number check |
 
-### c) It gives reasons, not just answers
-Every recommendation shows: how much fuel is there now, how much will be needed, when it will run out, how sure we are,
-which other routes we considered (and why they lost), and how much the risk drops if the operator accepts it.
+**How they collaborate on one cycle** (about 30 milliseconds end to end): the adapter delivers a fresh snapshot; the store updates history; the forecast engine produces distributions; the risk engine scores every station-fuel pair; the planner turns risky pairs into needs; the optimizer solves; the impact engine attaches before/after numbers and alternatives; the decision engine reconciles proposals with the ones already on screen, applies the approval rules, prechecks and sends approved shipments; the event bus pushes everything to the console; the model manager compares the last forecast with what actually happened.
 
-### d) It does the math properly instead of guessing
-Choosing shipments is a puzzle with many rules at once: each road has a maximum load, each depot has limited fuel and
-can only send so much per time step, and each station only has so much empty tank space. We use a proven puzzle-solving
-tool (Google's OR-Tools) that finds the best mix of shipments within all those rules. The same input always gives the
-same answer, so decisions can be checked and repeated. When fuel is short, it spreads it fairly so one station is not
-emptied while another is comfortable.
+---
 
-### e) Its settings were chosen by experiment, not by feel
-We replayed the hardest crises many times, changing one setting at a time (how many hours of fuel to aim for, how large
-a safety cushion to keep, how much to hold back in each depot). Longer targets and a bigger cushion clearly helped:
-service in the severe multi-failure test rose from 97.75% to 98.60%, and in the scarcity test from 94.09% to 94.55%,
-while sending slightly less fuel. Holding a reserve in each depot made no difference. Every run is recorded (in the
-database and in `docs/TUNING.md`), and the Forecast page lets you switch between model versions with one click.
+## 4. How a decision is made, step by step
 
-### f) It never sends a shipment the simulator would refuse
-Before sending, FuelGrid checks each shipment against the simulator's own rules (road open, enough stock, tank space, depot
-sending limit). It also avoids roads that have an *announced* closure about to start. If a check fails, nothing is sent,
-the operator sees the exact reason, and the system re-plans straight away.
+1. **Snapshot.** Current stock at every depot and station, road and site status, shipments in flight, announced events.
+2. **Forecast.** For each station and fuel: expected demand for each of the next 32 ticks, plus a 10th and 90th percentile band. The band width becomes the uncertainty.
+3. **Roll forward.** Start from current stock, add in-flight deliveries when they will land, subtract forecast demand tick by tick. The first tick stock reaches zero gives *hours to stock-out*. The chance that total demand exceeds stock plus incoming gives *stock-out probability*.
+4. **Severity.** CRITICAL if stock-out within 8 ticks (2 hours); WARNING if a stock-out is projected or probability is above 50%; WATCH above 15%; otherwise OK.
+5. **Need.** For a station at risk (or below 35% of tank), the fuel to add is: forecast demand over the cover target (default 32 ticks) **plus a safety buffer** (2.0 standard deviations of forecast error, from the model's own uncertainty) **minus** stock expected on arrival **minus** deliveries already coming, capped by free tank space.
+6. **Optimize** (next section) to split the needs across roads and depots.
+7. **Impact.** For each recommended shipment, roll the world forward again *with* it: stock-out probability before/after, unmet demand avoided. Also compute what the alternative policy and doing nothing would have left unmet.
+8. **Review gate.** If forecast confidence is below 0.35 the recommendation is flagged for a person and can never be auto-approved.
+9. **Reconcile.** A recommendation for the same (station, fuel, road) keeps its ID from the previous cycle, so the operator's list never shuffles.
+10. **Approve.** A person clicks Approve — or auto-approve sends it, if allowed by the rules (master switch on, within per-cycle budget, within the per-shipment cap, confidence and severity thresholds met, data not stale).
+11. **Precheck.** The shipment is checked against the simulator's exact validation order (status, road maximum, depot stock, sending limit, tank headroom) and against announced closures. A doomed shipment is never sent.
+12. **Send and record.** Idempotent send (unique ticket), shipment applied to local state at once, audit entry, event pushed to the screen.
 
-### g) It shows the proof, live
-Every planning round, FuelGrid also works out what would have happened if we did nothing, and what a simple rule-based
-approach would have done, on the same situation. The Overview shows all three side by side.
+---
 
-### h) It remembers past incidents
-When an incident (a closed road, a demand spike, a late delivery) ends, FuelGrid stores a short numeric fingerprint of it
-and what happened (how long it lasted, how much was shipped, how much demand went unmet) in the Supabase database, using
-its vector search feature. When a similar incident starts, the Overview shows the closest past cases ("seen before, 84%
-similar: lasted 5 hours, 12,000 L shipped"). If the database is down, the same search runs in memory.
+## 5. How the optimization works
 
-### i) A person stays in charge
-Automatic sending is **off** by default. When switched on, it has a size limit per round, it stops when the data looks
-old or broken, and it never applies to a recommendation we are unsure about. There is a pause switch. Every action is
-written to the audit log.
+The problem: several stations need fuel, several roads could carry it, each road has a maximum load, each depot has limited stock and can only send so much per tick, each tank has limited room. Find the best set of shipments.
 
-### j) The list of recommendations is stable
-Recommendations keep the same identity from one planning round to the next, so what the operator is looking at does not
-shuffle under their mouse. An approved shipment counts immediately, so it is never suggested twice and the same depot
-fuel is never spent twice. (We found and fixed a bug in this area during testing; there are tests for it.)
+**Formulation (OR-Tools CP-SAT, integer programming):**
+- Decision: an integer number of 100-litre units on each (road, fuel), between 0 and `min(road maximum, tank headroom)`.
+- Hard limits: depot stock minus a reserve (the reserve is released if the road serves a critical station); depot sending capacity per tick minus what is already pending; only roads that are open, between open sites, and not about to close.
+- For each station and fuel with a need: shortfall = need − delivered. Delivery may not exceed need + 5 units.
+- **Objective (minimize):** for each shortfall, `weight × 10 × (shortfall + deep_shortfall)` where `deep_shortfall` is the part beyond half the need (a convex, **fairness** penalty, so scarce fuel is spread instead of fully serving one station and starving another); `weight` = severity (30 critical, 10 warning, 3 watch, 1 ok) × urgency `(1 + 4/(1 + ticks to stock-out))`. Plus a small cost for transit time and volume as a tie-breaker (prefer short roads, ship less).
+- Deterministic: one worker thread, fixed seed, 2-second limit. Same input, same answer.
+- Anything under 500 L is dropped unless critical.
 
-### k) It keeps working when parts break
+**Fallbacks:** if the optimizer errors, times out or is infeasible, a greedy rule-based policy (most urgent first, nearest depot first) takes over immediately; three failed cycles in a row roll the platform over to the rule policy until an operator restores the optimizer.
+
+**Tuned by experiment, not by feel:** cover target 32 and safety buffer 2.0 were chosen from a parameter sweep on the hardest scenarios (`docs/TUNING_COMBOS.md`): severe multi-failure service rose from 97.75% to 98.60%.
+
+---
+
+## 6. The trained model: what it is, what it was trained on, how good it is
+
+**What it is.** Three gradient-boosted regression models (scikit-learn `HistGradientBoostingRegressor`, quantile loss) predicting the 10th, 50th and 90th percentile of demand, so we get a forecast and an honest uncertainty band. One **pooled** model serves every station and fuel: demand is divided by a recent-average scale, so it learns *shapes and dynamics*, not the size of any one station. That is why it can forecast a station it has never seen.
+
+**Features (18), all source-neutral:** hours ahead; time of day and day of week (as circular values); weekend flag; the last observation; averages over the last 4, 16 and one day; demand at the same time yesterday, the day before and last week (missing values allowed); the announced event multiplier at the target time and now; tick length; recent volatility; short-vs-daily level ratio. **No station identity, no fuel identity, no simulator demand profile.**
+
+**Where the data came from (all simulated; no real-world data was available or used):**
+
+| Dataset | How it was produced | Size |
+|---|---|---|
+| **Simulator, 5 scenarios** (baseline, demand spike, combined crisis, scarcity, severe multi-failure) | Our collector (`python -m app.ml.collect --sim`) resets the organizer's simulator, injects each scenario through its admin API, steps 576 ticks (6 days), and reads `/v1/demand-history` and `/v1/events` | 60 series |
+| **Four independent generated worlds** (seeds 1–4) | Our world generator (`app/worldgen/world.py`): 3 depots, 8 stations, 4 fuels, 30-minute ticks, smooth two-peak daily curves, weekday/weekend seasonality, trend, autocorrelated noise, with demand shifts, shifted peaks and surges injected mid-run | 128 series, 1,500 ticks each |
+| **Total** | | **188 series, 226,560 observations**, sampled to 250,000 training rows |
+
+Training takes about 22 seconds. Model file: 600 KB, stored in the repository and in Supabase (`fg_models`).
+
+**How well it works** (walk-forward on data the model did not train on; error = WAPE, total absolute error divided by total demand, lower is better; horizon = ticks ahead):
+
+| Experiment | Trained model | Same as now | Same as yesterday | Moving average | Hand-set expert | 80% band holds |
+|---|---:|---:|---:|---:|---:|---:|
+| **E1** held-out simulator scenario (h=8) | **6.3%** | 24.6% | 6.9% | 34.0% | 5.1% | 78% |
+| **E2** unseen generated network (h=8) | **13.9%** | 38.0% | 17.5% | 38.2% | n/a | 83% |
+| **E4** future window, all data (h=8) | **13.5%** | 37.7% | 16.9% | 38.7% | n/a | 82% |
+| **E3a** zero-shot: trained on simulator only, tested on new world (h=8) | 17.6% | 38.0% | 17.5% | 38.2% | n/a | **42%** |
+| **E3b** zero-shot: trained on worlds only, tested on simulator (h=8) | 10.5% | 24.6% | 6.9% | 34.0% | 5.1% | 84% |
+
+**Honest reading.**
+- The trained model beats the simple baselines at every horizon on unseen data, and its uncertainty band is well calibrated (about 80% of outcomes fall inside the 80% band) when it has seen varied worlds.
+- On the simulator the *hand-set expert* is slightly better (5.1% vs 6.3%) because that formula **is** how the simulator generates demand, so 5% is essentially the noise floor. The trained model gets within about one point without being told the formula, and works where no such formula exists.
+- A model trained on the simulator **alone** looks fine on error but is dangerously over-confident on a new network (band holds only 42%). That is exactly why FuelGrid retrains on the new network's own data, and why the champion was trained on both worlds.
+- What it relies on most (permutation importance): the value at the same time yesterday, then the day before, last week, and the latest observation.
+
+**How it keeps learning:** see Section 7.
+
+---
+
+## 7. How FuelGrid copes when the world keeps changing
+
+| Layer | Timescale | What happens |
+|---|---|---|
+| **1. Re-plan from live state** | every cycle (about 30 ms) | Nothing from the past is trusted. Stock, roads, capacities and in-flight shipments are re-read and the optimizer is re-solved. Forecast errors cannot pile up. |
+| **2. Online adaptation** | a few ticks | Each tick, the model's own next-step forecast is compared with reality. A smoothed correction per station and fuel follows level shifts immediately. Demand above the model's own 90th percentile for three ticks in a row is flagged as an **unexplained surge**. |
+| **3. Drift → retrain → gate → promote** | scheduled (every 480 ticks) or on drift | If rolling forecast error exceeds 25%, an incident is raised and a **challenger** model is trained on the history collected so far (plus a base corpus while history is short). Challenger and current **champion** are both scored on the most recent window the challenger did not train on. Only a win of at least 3% replaces the champion; the old model stays in the registry for **one-click rollback**. |
+| **4. Data that changes shape** | any time | Stations, depots, roads and fuels are data, not code. A new station appears (or disappears) when the topology is updated; it uses a moving average until it has 24 observations, then the model takes over. |
+| **5. Messy data** | every reading | Negative, impossible or unknown-entity values are rejected with a reason; values above capacity are clamped and flagged; silent sensors keep their last value and are listed; a feed that goes quiet is reported stale and auto-dispatch pauses. A data-quality score is on screen. |
+
+**Measured** (`docs/ADAPTATION.md`, graph in README): the same unseen network and the same five surprises — demand +40% (t=150), daily peaks shifted 3 hours (t=300), three sensors silent (t=450), a new station (t=520), an unannounced surge (t=600) — replayed under five forecasting approaches feeding the same optimizer in a closed loop.
+
+| Approach | Mean 1-step forecast error | Service level | Model retrains |
+|---|---:|---:|---:|
+| Hand-set expert profile | 20.7% | 99.97% | none |
+| Moving average | 25.8% | 99.98% | none |
+| **Trained model, frozen** | **14.1%** | 99.98% | none |
+| Trained + online adaptation | 14.0% | 99.98% | none |
+| Trained + adaptation + retraining | 14.0% | 99.97% | 3 run, 1 promoted, 2 rejected |
+
+**Honest reading of this experiment:**
+- On a network it has never seen, the trained model forecasts about **32% better than the hand-set profile and 45% better than a moving average**, and stays in the 12-17% range around every surprise while the baselines sit at 19-29%.
+- **Service level is about 99.98% for every approach.** That is not a flaw in the test, it is the design working: because the optimizer re-plans hourly from measured stock, forecast errors are corrected before they turn into stock-outs. Forecast accuracy shows up in early warnings, safety stock and risk numbers rather than in final service.
+- **Online correction adds little on top of the trained model**, because the model already forecasts from recent history (its inputs include the latest observation and the day's average), so it follows level shifts by construction. After the demand jump it kept error at 13% where the frozen model briefly rose to 17%.
+- **A shifted daily pattern (peaks moving 3 hours) is the hardest surprise for every approach.** The trained model's error rose from 13% to 20% and settled near 17-19%, still better than the baselines (23-27%). A challenger trained at t=482, 180 ticks after the shift, was **rejected** because it did not clearly beat the champion. It shows the gate protecting us from a churn of marginal models, and shows that pattern changes need more post-change history before retraining pays off.
+- Planning only every 6 hours is not viable with this planner (one shipment per road and fuel per plan), which we document as a limitation.
+
+---
+
+## 8. Independence from the simulator
+
+**One contract, two adapters.** The core only knows the canonical model (`app/domain`) and the `DataSource` contract (`app/adapters/base.py`). Fuels are plain text; nothing in the forecast or optimizer names a station, product or region.
+
+| Adapter | How it connects | Notes |
+|---|---|---|
+| **Simulator** | REST for state, server-sent events as change hints, one write endpoint | Has an admin console for crises and faults |
+| **Live feed** | `POST /api/feed/topology`, `POST /api/feed/telemetry`; orders pulled from `GET /api/feed/orders` (optional webhook); progress via `POST /api/feed/orders/{id}/ack` | Validates and scores quality; handles changing topology; goes stale when silent |
+
+**Proof it is not simulator-bound:**
+- An **independent world** (3 depots, 8 stations, 4 fuels incl. LPG, 30-minute ticks, weekly seasonality, injected shocks) runs in-process (one click) or **from outside over plain HTTP** (`python -m app.worldgen.run`), which imports nothing from FuelGrid.
+- A test runs the full loop (feed → forecast → optimize → approve → world executes) on it and keeps service healthy.
+- The console can **switch source live** without a restart.
+
+**Connecting a real company** would mean writing a small gateway that translates their systems into the topology/telemetry calls above and executes the orders it pulls. No change to the core.
+
+---
+
+## 9. Controls and safety for real use
+
+| Control | What it does |
+|---|---|
+| Start / pause engine | Stops or resumes planning and dispatch |
+| **Emergency stop** | One button: pause, switch auto-approve off, withdraw pending recommendations |
+| Auto-approve (master switch) | Off by default; every shipment waits for a person |
+| Auto-approve rules | Budget per cycle, largest single shipment, minimum confidence, minimum severity |
+| Approve all / reject all / replan now | Bulk actions on the pending list |
+| Planning parameters | Policy, cover target, safety buffer, depot reserve, horizon, re-plan cadence |
+| Model controls | Demand model choice, online adaptation, auto-retrain, schedule, retrain now, activate any version |
+| Resilience thresholds | Stale-data limit, rollback threshold |
+| Data source | Switch source, run the demo world, change it while running |
+| Operator API key | Optional; protects every write action (reading stays open) |
+
+Every control is validated on the server (bad values are refused), written to the audit log with old and new value, and **saved in Supabase** so it survives a restart. After a restart, **auto-approve is deliberately left off** and the log says so.
+
+---
+
+## 10. What happens when something breaks
 
 | What breaks | What FuelGrid does |
 |---|---|
-| The simulator is slow or down | Tries again with growing waits; after repeated failures it leaves the simulator alone for a short while and keeps showing the last good data, clearly labeled "degraded" |
-| The simulator sends nonsense | Rejects it, raises an alert, keeps the last good data |
-| The simulator says its data is out of date | Shows a warning and pauses automatic sending |
-| The live-update connection drops | Reconnects on its own; regular checking fills the gap; everything is re-read afterwards |
-| The smart planner fails | Switches to a simpler rule-based planner and says so |
-| The smart planner keeps failing (3 rounds in a row) | Switches over for good, with a banner and a one-click "Restore optimizer" button |
-| The demand estimator fails | Switches to a simple average |
-| The demand pattern drifts | Raises an incident and an alert |
-| A shipment would be refused by the simulator | Not sent; reason shown; plan redone |
-| Sending a shipment fails midway | Each shipment has a unique ticket number, so retrying can never send it twice |
-| Our database is down | Keeps records in memory and saves them when it returns; operations continue |
-| The simulator is reset | Notices the clock went backwards and clears old data |
-| Too many people hit the system at once | Simultaneous requests share one round of work instead of piling up |
-| An AI service is busy, wrong or unreachable | Rotates to another free model, then to the backup provider, then to the built-in answer |
-
-### l) It is careful with the shared simulator
-During our load test the organizers' simulator stopped responding, because it can only handle a few requests at a
-time and our system was asking too much. We fixed it: FuelGrid now limits how many requests it sends at once and never
-repeats the same refresh in parallel. The same test now leaves the simulator healthy. A system that can knock over its
-own data source is not reliable, so this matters.
-
-### m) We measure, we do not just claim
-
-**Decision quality.** We reset the simulator, replay the same crisis, and compare three approaches on the exact same
-world: **do nothing**, **simple rules**, and **our planner**. Share of fuel demand actually served (higher is better):
-
-| Situation | Do nothing | Simple rules | FuelGrid planner |
-|---|---:|---:|---:|
-| Normal operation (2 days) | 46% | 100% | 100% |
-| Demand jump in one city | 43% | 100% | 100% |
-| One main road closed | 46% | 100% | 100% |
-| Late deliveries | 46% | 100% | 100% |
-| Several problems at once | 43% | 100% | 100% |
-| Severe multi-failure (3 days) | 27% | 98.6% | 98.6% |
-| Fuel scarcity (supply cut to a quarter, 3 days) | 21% | 93.1% | 94.6% |
-
-Honest reading: doing nothing fails badly, because the starting fuel only lasts about a day. Once both smart approaches
-use the tuned settings, they tie in every case except the hardest one. In the scarcity test our planner leaves about a
-fifth less demand unserved than the simple rules (22,542 L against 28,538 L) because it shares scarce fuel more fairly.
-We say this openly rather than overselling: the value of the planner shows up under real shortage.
-
-**Speed under load.** We simulated a busy control room (50 people at once) for a minute while the simulator ran live:
-2,407 requests, **no failures**, half answered in under 8 thousandths of a second, 95 out of 100 in under 40
-thousandths, 99 out of 100 in under 70 thousandths. A full "read, predict, decide" round takes about 30 thousandths of
-a second. Then a stress test with 250 people at once: 7,258 requests, still **no failures**, about 160 requests a
-second (the limit of one processor core), and even the slowest answer took under 2 seconds. Details, including the
-problems the test uncovered and how we fixed them, are in `docs/LOAD_TEST.md`.
-
-### n) It can be shipped and watched
-- One command runs everything in containers (`docker compose up --build`), with an optional monitoring stack
-  (Prometheus and a ready-made Grafana dashboard) and alert rules for the situations that matter.
-- Automated checks on every change: style check, 61 tests, front-end build, container build and a start-up health test.
-- A metrics page and structured logs for everything: request speed, errors, forecast accuracy, how often backups kicked
-  in, how many shortage alerts are open.
-- The running version is shown on the health page, so we always know which build is live.
-
-### o) What we chose not to build, and why
-The organizers list some advanced options. We built the ones that make decisions better or the system more
-trustworthy (see `docs/OPTIONAL_FEATURES.md`). We deliberately skipped learning-by-trial-and-error (reinforcement
-learning), multiple negotiating agents, and container clusters: each planning step is a small problem that our solver
-already solves exactly, and one process handled 160 requests a second with no errors. Adding them would add risk without
-adding evidence of benefit.
+| Source slow or down | Retries with growing waits; after 5 failures stops calling for 3 s, then probes; meanwhile shows last good data, labeled degraded; auto-dispatch pauses |
+| Source sends nonsense | Rejected, alert raised, last good data kept |
+| Data older than the limit | Warning; auto-dispatch pauses |
+| Live-update connection drops | Reconnects with backoff; polling fills the gap; state re-read after reconnect |
+| Optimizer fails | Rule-based policy immediately; after 3 in a row it becomes the active policy with a restore button |
+| Trained model missing or failing | Moving average until it works |
+| Model drifts | Incident and alert; challenger trained; promoted only if clearly better |
+| A new model is worse | Not promoted; if a promoted one later disappoints, roll back in one click |
+| A shipment would be refused | Not sent; reason shown; replanned |
+| Sending fails midway | Unique ticket makes retry safe (never a double shipment) |
+| Database down | Writes buffered and retried; console served from memory |
+| Simulator or world reset | Clock going backwards is detected; caches cleared |
+| Too many callers | Simulator calls capped; simultaneous refreshes and decide-now requests share one run |
+| AI service busy or wrong | Rotate to another free model, then the backup provider, then the built-in answer; replies with unknown numbers are discarded |
 
 ---
 
-## 4. Technology choices, in plain words
+## 11. Observability, deployment, testing
+
+- **Observability:** Prometheus metrics (request rate/latency/errors, source health, breaker, fallbacks, open alerts, forecast error and confidence, model retrains, allocations, service level, database), structured logs, a health page, ready-made Grafana dashboard and alert rules.
+- **Deployment:** `docker compose up --build` (simulator + FuelGrid); optional profiles for Prometheus/Grafana and a local database; multi-stage image with health check and non-root user; CI runs lint, tests, front-end build, image build and a start-up smoke test.
+- **Testing:** 87 automated tests: optimizer constraints, fallbacks and rollback, decision workflow and stable IDs, precheck, feed validation and quality, dynamic topology, closed loop on an unseen network, model features/calibration/serialization/adaptation/gate, controls and safety, assistant grounding, API contract, load-test-derived hardening.
+
+---
+
+## 12. Measured results
+
+**Decision quality** (`docs/BENCHMARK.md`): the same crisis replayed under "do nothing", "simple rules" and our optimizer:
+
+| Situation | Do nothing | Simple rules | FuelGrid |
+|---|---:|---:|---:|
+| Normal (2 days), demand jump, road closed, late deliveries, combined crisis | 43–46% | 100% | 100% |
+| Severe multi-failure (3 days) | 27% | 98.6% | 98.6% |
+| Fuel scarcity, supply cut to a quarter (3 days) | 21% | 93.1% | **94.6%** |
+
+Honest reading: doing nothing fails; both smart policies handle normal and medium crises; the optimizer's edge appears under real shortage (about a fifth less unmet demand than simple rules in the scarcity test).
+
+**Load** (`docs/LOAD_TEST.md`): 50 users, 2,407 requests, 0 failures, 95% under 37 ms, 99% under 68 ms; 250 users, 7,258 requests, 0 failures, about 160 requests/s (one processor core is the limit). The test found and we fixed: slow repeated work, a thread-safety error, and a risk of overloading the simulator.
+
+---
+
+## 13. Technology choices in plain words
 
 | Choice | Why |
 |---|---|
-| Python + FastAPI for the server | Fast to build, easy to read, good for data work |
-| Supabase (PostgreSQL + vector search) for storage | Managed database, so we spend time on the product; its vector search powers incident memory |
-| Google OR-Tools | Finds the best shipments under many rules, with repeatable results |
-| React + Tailwind + Recharts for the screens | Clean, modern, quick to change |
-| Prometheus + Grafana (optional) | Standard tools for watching a running system |
-| Gemini and Groq free models (optional) | Only to reword explanations; core decisions never depend on them |
-| No heavy extras (message queues, container clusters) | The organizers said extra complexity earns nothing by itself |
+| Python + FastAPI | Fast to build, readable, strong data and ML libraries |
+| scikit-learn gradient boosting | Accurate on tabular time-series features, trains in seconds, tiny model file, gives quantiles for uncertainty |
+| Google OR-Tools (CP-SAT) | Exact optimization under many rules, deterministic |
+| Supabase Postgres + pgvector | Managed storage for audit, models, settings; vector search for incident memory |
+| React + Tailwind + Recharts | Clean, modern operator console |
+| Prometheus + Grafana | Standard monitoring |
+| Gemini / Groq (free, optional) | Only to reword explanations; decisions never depend on them |
+| No reinforcement learning, multi-agent or clusters | Each planning step is solved exactly; one process handled 160 requests/s. See `docs/OPTIONAL_FEATURES.md` |
 
 ---
 
-## 5. Questions judges may ask, with our answers
+## 14. Questions judges may ask, with answers
 
-**Q1. What problem are you actually solving?**
-Helping an operations team see trouble early and choose good shipments before a station runs dry, while staying usable
-when the tools themselves fail.
+**Did you train any model?** Yes: gradient-boosted quantile regression, trained on 226,560 observations from the simulator and generated worlds, with walk-forward evaluation, a model registry and automatic retraining (Section 6).
 
-**Q2. Why not just use a machine-learning model for everything?**
-The demand pattern in this world is regular, so a simple estimate that learns from the data and uses the announced
-events is accurate and easy to explain. Choosing shipments is a rules-and-limits puzzle, and a puzzle solver is the right
-tool for that. We used learning only where it helps: the demand estimate.
+**Where did the training data come from?** Two places, both simulated: the organizer's simulator (we drove it through five crisis scenarios via its admin API and read the demand history) and independent worlds our own generator produced. There was no real-world data available; we say so openly. The collection and generation code is in the repository (`app/ml/collect.py`, `app/worldgen/world.py`) so anyone can reproduce it.
 
-**Q3. How accurate is your demand estimate?**
-About 5% average error on the next 15-minute step in our runs (the simulator itself adds random noise of around 10%, so
-this is close to the best possible). It is shown live, and an alert fires if it worsens.
+**Isn't training on simulated data a weakness?** It is a limitation, and the design accounts for it: the model is pooled and scale-free so it transfers; it is retrained on each network's own data; a challenger only replaces the champion on a measured win. On a real network the first step would be to let it collect history and retrain.
 
-**Q4. How do you know your planner is good?**
-Two ways. Offline, we replay the same crisis against "do nothing", "simple rules" and our planner, on identical worlds.
-Live, the Overview compares all three on the current situation every planning round. Results and honest caveats are in
-the table above.
+**How do you know it isn't just memorizing the simulator?** We tested on data it never saw: a held-out crisis scenario and a completely different generated network. It beats the baselines on both, and the zero-shot tests show where it does not (over-confident when trained on one world alone), which is why we train on two.
 
-**Q5. Why should a judge trust a recommendation?**
-It shows the reasons, the numbers behind them, the alternatives we rejected, how sure we are, and the expected
-improvement. Weak-evidence recommendations are blocked from automatic sending, and every shipment is checked against the
-simulator's rules before it is sent.
+**Why not just use a formula?** We have one (the hand-set expert); it is a bit better *on the simulator* because it is the simulator's own formula, but it needs that knowledge and fails when the network differs. The trained model needs no such knowledge.
 
-**Q6. What if your planner crashes or gives a bad answer?**
-It falls back to a simpler planner automatically and the dashboard shows a banner. If it keeps failing, FuelGrid
-switches over for good and offers a one-click restore. Each step is logged and counted. We have tests that force these
-failures.
+**Why gradient boosting and not deep learning?** The signal is tabular (time of day, lags, level), the data is modest, and we need fast retraining (22 seconds), a tiny model, quantiles and interpretability. Deep learning would add cost and risk without evidence of a benefit here.
 
-**Q7. What happens if the simulator goes down during the demo?**
-The dashboard keeps working from the last good data and is clearly labeled degraded. Automatic sending pauses. When the
-simulator returns, FuelGrid re-reads everything and logs the recovery. This happened for real during our load testing,
-and the system handled it. You can also trigger it live from the Scenarios page.
+**What does "confidence" mean?** A number from 0 to 1 built from the width of the model's 10–90% band relative to its forecast and from how much history the station has. Below 0.35, a person must decide.
 
-**Q8. Can it accidentally send the same shipment twice?**
-No. Every shipment carries a unique ticket, and the simulator returns the same shipment if we resend the same ticket.
-An approved shipment also counts immediately inside FuelGrid, so it is not proposed again.
+**How does it handle a station it has never seen?** It uses a moving average for the first 24 observations, then the pooled model, because the model is scale-free.
 
-**Q9. Who is in control, the machine or the person?**
-The person. Automatic sending is off by default, capped, blocked when data or confidence is doubtful, and has a pause
-switch. Everything is written to the audit log.
+**What if demand suddenly changes for good?** Within a few ticks the online correction follows it; if error stays high a retrain is triggered and the new model replaces the old only if it scores better on recent data (Section 7).
 
-**Q10. How do you handle a crisis you have never seen?**
-We do not depend on a fixed script. Every round we re-read the real state: which roads are closed or about to close,
-which stations are out, how full each depot is, which events are announced. The planner only uses options that are valid
-right now. We tested each crisis type the organizers listed, and combinations of them, and the Scenarios page lets you
-create new ones live.
+**What if retraining makes things worse?** The gate rejects it (in our adaptation run, two of three challengers were rejected, including one trained shortly after a pattern shift). If a promoted model disappoints later, roll back in one click.
 
-**Q11. What about when there is simply not enough fuel?**
-The planner spreads scarce fuel so no single station is starved while another has plenty. Some unmet demand is
-unavoidable then; we report it honestly. This is where our planner beats simple rules most clearly.
+**Is it using the simulator?** It can. It also runs on a live feed of any system, proven on an independent network; the simulator is one of two adapters (Section 8).
 
-**Q12. How do you know the system itself is healthy?**
-A health page shows the database, simulator link, live-update link, demand estimator and planner, plus speed and error
-rate. There is a metrics page for monitoring tools, ready-made alert rules and a Grafana dashboard, and a permanent
-audit log.
+**How would you connect it to a real company?** Write a small gateway that pushes topology and telemetry to `/api/feed/*` and executes the orders it pulls. The core does not change.
 
-**Q13. How did you test performance under load?**
-With a standard load-testing tool, against the live system while the simulator ran. Results are in section 3m:
-no failures at 50 or 250 simultaneous users; 99 of 100 requests under 70 thousandths of a second at normal load; a
-limit of about 160 requests a second on one processor core. The test also found real problems (slow repeated work, a
-rare error, and the risk to the simulator), which we fixed and then re-measured.
+**How does the optimizer decide?** It minimizes weighted, fairness-adjusted shortfall subject to every road, depot, sending and tank limit (Section 5).
 
-**Q14. Does the dashboard update live?**
-Yes. The server pushes each change to the browser as it happens (new recommendation, alert, recovery, link change), and
-the browser also checks every few seconds as a safety net. Approve and Reject take effect instantly on screen.
+**Why is the optimizer trustworthy?** It is exact, deterministic, respects the simulator's rules, is checked by a precheck before sending, shows before/after impact and alternatives, and is compared live with doing nothing and with simple rules.
 
-**Q15. Where does AI come in, and is it safe?**
-Decisions come from a solver and a demand estimator, not from a chat model. AI is used only to reword explanations in the
-Ops assistant, with free Gemini models first and Groq as backup. The system finds the available free models on its own
-and rotates when one is busy. Any reply with a number that is not in the real data is discarded, and the assistant cannot
-take actions. With no AI key at all, the assistant still answers from the data.
+**How do you handle bad sensor data?** Reject impossible values, clamp and flag suspicious ones, carry forward silent sensors, mark a silent feed stale, show a quality score (Section 7, layer 5).
 
-**Q16. Is it easy to run on another machine?**
-Yes. `docker compose up --build` starts everything, including the organizers' simulator. A short manual route is in the
-README. Automated checks run on every change.
+**Who is in control?** The person. Auto-approve is off by default, bounded by budget, shipment size, confidence and severity, suspended on stale data, off again after a restart, with one-button emergency stop and full audit.
 
-**Q17. Are you using real data or secrets?**
-No. Everything is simulated. Passwords and keys are read from a private settings file that is never committed.
+**How do you prevent AI hallucination?** Answers are built from live data; an optional language model may only reword them, and any reply with a number not in the data is discarded.
 
-**Q18. Could your system harm the shared simulator?**
-It could have, and we found that out by testing. FuelGrid now limits how many requests it sends at once and never
-duplicates a refresh, and there are tests for both.
-
-**Q19. Why did you not use reinforcement learning or several cooperating agents?**
-Each planning step is small enough for our solver to find the exact best answer. Learning by trial and error would need
-long training against a slow simulator and would have to beat a strong baseline; we saw no evidence it could. We would
-rather spend the effort on things we could measure.
-
-**Q20. What are the weaknesses?**
-Honest answer: the world is small and regular, so results will look better than in a messy real country. Our demand
-estimate leans on the organizers' published daily pattern and announced events. With the tuned settings, simple rules
-are already as good as our planner in most crises, so our advantage shows mainly under real shortage. And the system runs
-as one process, which is enough here but would need copies behind a load balancer at much larger scale.
-
-**Q21. What would you build next with more time?**
-Test on a larger, messier network; feed in real-world signals such as weather or events; have the assistant explain
-weekly trends; and automatically promote a better planner version after testing it side by side.
+**What are the weaknesses?** Training data is simulated; the world is small and regular so real results would be messier; planning once every several hours is throughput-limited (one shipment per road and fuel per plan); a single process is the ceiling at about 160 requests/s; the sim-only model is over-confident on other networks until retrained.
 
 ---
 
-## 6. Two-minute demo story
+## 15. Three-minute demo
 
-1. Open Overview: calm network, briefing says all is stable, service level 100%.
-2. On Scenarios, apply "Combined crisis": demand jumps, roads close, deliveries are late.
-3. Watch the briefing turn red, alerts appear in the live activity feed, and recommendations arrive with reasons. Point
-   at the live comparison: doing nothing leaves far more demand unserved than our plan. Approve one shipment; it
-   disappears immediately.
-4. Ask the assistant: "Why is Karnaphuli diesel low?" and "Is the optimizer better than doing nothing?"
-5. Break our own system: make the simulator unavailable for 30 seconds. Show the degraded banner and cached data.
-6. Clear the fault: show the automatic recovery in the audit log and the incident memory card.
-7. Open Replay and scrub through the crisis. Close with the benchmark table and the load-test result.
+1. **Overview:** calm network, briefing says stable, 100% service.
+2. **Scenarios:** apply the combined crisis; watch alerts, recommendations with reasons, and the live comparison against doing nothing. Approve one; it disappears instantly.
+3. **Controls:** show Emergency stop, auto-approve rules, and the audit trail of the change.
+4. **Data sources:** click *Start demo world*: a different network with LPG appears; the same platform runs on it. Click *Demand jumps +40%* and *Daily peaks move +3 h*; open **Forecast & Models** and watch error rise then recover.
+5. **Ops assistant:** "Why is this station low?" and "Is the optimizer better than doing nothing?".
+6. **Fault:** make the simulator unavailable for 30 s, show degraded mode, then recovery in the audit log.
+7. **Replay** the crisis; close with the benchmark, model and load-test graphs.
+
+---
+
+## 16. Glossary
+
+| Term | Plain meaning |
+|---|---|
+| **Tick** | One step of the clock (15 minutes in the simulator) |
+| **Service level** | Share of fuel demand actually served |
+| **Forecast horizon** | How many ticks ahead we predict |
+| **Quantile / 80% band** | A range where the true value should land about 80% of the time |
+| **Calibration / coverage** | Whether that range really holds 80% of outcomes |
+| **WAPE** | Total forecast error divided by total demand; lower is better |
+| **Pooled model** | One model shared by all stations and fuels |
+| **Walk-forward test** | Forecast points in the future of the training data, like real use |
+| **Online adaptation** | Small automatic correction every tick that follows sudden shifts |
+| **Drift** | The world changed so old patterns no longer fit |
+| **Champion / challenger** | Current model vs. a newly trained candidate; the candidate must win a fair test |
+| **Optimizer (CP-SAT)** | A solver that finds the best whole-numbers plan within all limits |
+| **Fallback** | A simpler backup that takes over when something fails |
+| **Idempotent** | Sending the same order twice has the same effect as once |
+| **Circuit breaker** | Stop calling a failing service for a short time so it can recover |
+| **Adapter** | A translator between an outside system and our internal data model |
+| **pgvector** | Database feature for finding similar records by numbers |
+| **SSE** | The server pushing live updates to the screen |

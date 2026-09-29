@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from app.simulator import models as M
+from app.domain import models as M
 
 
 @dataclass
@@ -18,6 +18,16 @@ class Snapshot:
     metrics: M.Metrics
     fetched_at: float = field(default_factory=time.time)
     stale: bool = False
+
+    @property
+    def fuels(self) -> list[str]:
+        """Every product present anywhere in the network (works for any fuel set)."""
+        found: set[str] = set()
+        for st in self.stations.values():
+            found.update(st.capacity)
+        for d in self.depots.values():
+            found.update(d.capacity)
+        return sorted(found)
 
     @property
     def tick(self) -> int:

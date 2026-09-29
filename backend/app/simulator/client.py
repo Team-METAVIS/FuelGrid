@@ -10,8 +10,8 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 from app.core import metrics as m
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.simulator import models as M
-from app.simulator.errors import AllocationRejected, InvalidSimulatorResponse, SimulatorUnavailable
+from app.domain import models as M
+from app.domain.errors import AllocationRejected, InvalidSimulatorResponse, SimulatorUnavailable
 
 log = get_logger("sim.client")
 T = TypeVar("T", bound=BaseModel)
@@ -46,6 +46,15 @@ class _Transient(Exception):
 
 
 class SimulatorClient:
+    kind = "simulator"
+    label = "BUP Fuel Supply Simulator"
+    supports_admin = True
+    supports_stream = True
+
+    @property
+    def breaker_open(self) -> bool:
+        return self.breaker.open
+
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
         self.http = httpx.AsyncClient(

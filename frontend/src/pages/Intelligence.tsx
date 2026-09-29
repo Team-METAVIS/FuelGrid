@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ModelCard from "../components/ModelCard";
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge, Card, Empty, PageHeader, Stat, Td, Th } from "../components/ui";
 import { get } from "../lib/api";
@@ -117,6 +118,8 @@ export default function Intelligence() {
           )}
         </Card>
       </div>
+
+      <ModelCard />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <Card title="Model registry" subtitle="Versioned forecasters and policies; switching is instant and audited">

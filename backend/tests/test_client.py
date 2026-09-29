@@ -3,9 +3,9 @@ import pytest
 import respx
 
 from app.core.config import Settings
-from app.simulator import models as M
+from app.domain import models as M
+from app.domain.errors import AllocationRejected, InvalidSimulatorResponse, SimulatorUnavailable
 from app.simulator.client import SimulatorClient
-from app.simulator.errors import AllocationRejected, InvalidSimulatorResponse, SimulatorUnavailable
 
 BASE = "http://sim.test"
 INST = {"id": 1, "scenario_id": "b", "seed": 1, "sim_time": "2026-01-01T00:00:00+00:00", "tick": 3, "tick_minutes": 15, "status": "PAUSED"}
@@ -64,7 +64,8 @@ def test_allocation_request_validates_input():
     with pytest.raises(ValueError):
         M.AllocationRequest(idempotency_key="", source_depot_id="d", destination_station_id="s", route_id="r", fuel_type="DIESEL", quantity=10)
     with pytest.raises(ValueError):
-        M.AllocationRequest(idempotency_key="k", source_depot_id="d", destination_station_id="s", route_id="r", fuel_type="COAL", quantity=10)
+        M.AllocationRequest(idempotency_key="k", source_depot_id="d", destination_station_id="s", route_id="r", fuel_type="DIESEL", quantity=0)
+    assert M.AllocationRequest(idempotency_key="k", source_depot_id="d", destination_station_id="s", route_id="r", fuel_type="LPG", quantity=5).fuel_type == "LPG"
 
 
 @respx.mock

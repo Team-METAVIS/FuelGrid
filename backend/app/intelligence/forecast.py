@@ -16,6 +16,7 @@ from datetime import timedelta
 
 from app.intelligence.priors import prior_per_tick
 from app.intelligence.types import Forecast
+from app.ml.covariates import announced_multiplier
 from app.state.store import Snapshot, StateStore
 
 V1 = "seasonal-ewma-v1"
@@ -28,21 +29,9 @@ def _future_hours(snap: Snapshot, horizon: int) -> list[int]:
     return [(t0 + timedelta(minutes=snap.tick_minutes * k)).hour for k in range(1, horizon + 1)]
 
 
-def _affects(params: dict, station) -> bool:
-    """Event filters: an empty list means 'all'."""
-    sids, rids = params.get("station_ids") or [], params.get("region_ids") or []
-    if not sids and not rids:
-        return True
-    return station.id in sids or station.region_id in rids
-
-
 def event_multiplier(snap: Snapshot, station, tick: int) -> float:
-    """Demand multiplier the simulator applies to `station` at `tick`, from announced spike events."""
-    m = 1.0
-    for e in snap.events:
-        if e.type == "demand_spike" and e.start_tick <= tick < e.end_tick and _affects(e.parameters, station):
-            m *= float(e.parameters.get("multiplier", 1.5))
-    return m
+    """Demand multiplier announced for `station` at `tick` (delegates to the source-neutral implementation)."""
+    return announced_multiplier(snap.events, station.id, station.region_id, tick)
 
 
 def _ratio_series_v1(store: StateStore, snap: Snapshot, sid: str, fuel: str, n: int) -> list[float]:

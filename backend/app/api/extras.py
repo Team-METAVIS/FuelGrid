@@ -7,8 +7,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.feed import guard
 from app.intelligence import assistant
 from app.intelligence.forecast import V1, V2
+from app.ml.manager import manager
 
 router = APIRouter(prefix="/api")
 DOCS = Path(__file__).resolve().parents[3] / "docs"
@@ -91,7 +93,8 @@ async def replay(run_id: str, r=Depends(rt)):
 
 # --------------------------------------------------------------------------------------------- registry / experiments
 FORECASTERS = {
-    "seasonal": {"version": V2, "title": "Seasonal + events (v2)", "description": "Daily profile x region factor x announced events x learned residual"},
+    "learned": {"version": "trained model", "title": "Trained model (default)", "description": "Gradient-boosted quantile model learned from data; adapts online and retrains itself"},
+    "seasonal": {"version": V2, "title": "Expert profile (simulator-specific)", "description": "Daily profile x region factor x announced events x learned residual"},
     "seasonal_v1": {"version": V1, "title": "Seasonal moving level (v1)", "description": "Daily profile x moving average of observed/expected"},
     "moving_avg": {"version": "moving-average-v1", "title": "Moving average (fallback)", "description": "Last-resort trailing mean"},
 }
@@ -99,6 +102,45 @@ POLICIES = {
     "optimizer": {"title": "OR-Tools optimizer", "description": "Integer program: fair, urgency-weighted, all limits enforced"},
     "rules": {"title": "Rule-based baseline", "description": "Greedy by urgency; used as automatic fallback"},
 }
+
+
+def _report() -> dict:
+    f = DOCS / "model_report.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+
+
+@router.get("/adaptation")
+async def adaptation():
+    f = DOCS / "adaptation_report.json"
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+
+
+@router.get("/models/learned")
+async def learned_model(r=Depends(rt)):
+    """The trained model's card: what it is, how it was trained, how it scored, what it relies on, and its version history."""
+    return {**manager.info(), "report": _report()}
+
+
+@router.post("/models/retrain", dependencies=[Depends(guard)])
+async def retrain(r=Depends(rt)):
+    snap = r.store.snapshot
+    if snap is None:
+        raise HTTPException(409, "no data yet")
+    r.repo.audit(r.run_id, "operator", "Manual model retrain requested", "info")
+    res = await manager.retrain(r.store, snap, "operator request", force=True)
+    return res
+
+
+class Activate(BaseModel):
+    version: str
+
+
+@router.post("/models/activate", dependencies=[Depends(guard)])
+async def activate_model(body: Activate, r=Depends(rt)):
+    if not await manager.activate(body.version):
+        raise HTTPException(404, "unknown model version (or the database is unavailable)")
+    r.repo.audit(r.run_id, "operator", f"Model rolled to version {body.version}", "warn")
+    return manager.info()
 
 
 @router.get("/models")

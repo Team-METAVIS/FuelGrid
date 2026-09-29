@@ -6,7 +6,7 @@ layered on later to reword it, but it would only ever explain, never decide."""
 def build(rt) -> dict:
     snap = rt.store.snapshot
     if snap is None:
-        return {"headline": "Waiting for the simulator", "tone": "warn", "points": []}
+        return {"headline": "Waiting for data", "tone": "warn", "points": []}
     eng, plan = rt.engine, rt.engine.plan
     pts: list[dict] = []
     risks = plan.risks if plan else []
@@ -53,8 +53,8 @@ def build(rt) -> dict:
         pts.append({"kind": "compare", "text": line})
 
     h = rt.client
-    if snap.stale or snap.age_s() > rt.cfg.stale_after_s or h.breaker.open:
-        pts.append({"kind": "system", "text": "The simulator link is degraded. FuelGrid is showing the last good data and automatic dispatch is paused."})
+    if snap.stale or snap.age_s() > rt.cfg.stale_after_s or h.breaker_open:
+        pts.append({"kind": "system", "text": "The data-source link is degraded. FuelGrid is showing the last good data and automatic dispatch is paused."})
     if rt.cfg.policy_rolled_back:
         pts.append({"kind": "system", "text": "The optimizer failed repeatedly, so the simpler rule-based planner has been switched on automatically."})
     elif plan and plan.fallback_used:

@@ -1,6 +1,8 @@
 import clsx from "clsx";
-import { Activity, AlertTriangle, BrainCircuit, ClipboardList, FlaskConical, Fuel, History, LayoutDashboard, MessageSquare, Network, ScrollText, ServerCog, WifiOff } from "lucide-react";
+import { Activity, AlertTriangle, BrainCircuit, ClipboardList, Database, FlaskConical, Fuel, History, LayoutDashboard, MessageSquare, Network, ScrollText, ServerCog, SlidersHorizontal, WifiOff } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { apiKey } from "../lib/api";
 import { NavLink } from "react-router-dom";
 import { useLive } from "../lib/live";
 import { simTime } from "../lib/format";
@@ -11,6 +13,7 @@ const NAV = [
     { to: "/", label: "Overview", icon: LayoutDashboard },
     { to: "/network", label: "Network", icon: Network },
     { to: "/recommendations", label: "Decisions", icon: ClipboardList, badge: true },
+    { to: "/controls", label: "Controls", icon: SlidersHorizontal },
   ] },
   { group: "Intelligence", items: [
     { to: "/intelligence", label: "Forecast & Models", icon: BrainCircuit },
@@ -19,6 +22,7 @@ const NAV = [
     { to: "/replay", label: "Replay", icon: History },
   ] },
   { group: "Platform", items: [
+    { to: "/sources", label: "Data sources", icon: Database },
     { to: "/system", label: "System health", icon: ServerCog },
     { to: "/audit", label: "Audit log", icon: ScrollText },
   ] },
@@ -27,6 +31,9 @@ const NAV = [
 export default function Layout({ children }: { children: ReactNode }) {
   const { state, connected, toasts, act } = useLive();
   const pending = state?.recommendations.length ?? 0;
+  const [needKey, setNeedKey] = useState(false);
+  const [key, setKey] = useState("");
+  useEffect(() => { const f = () => setNeedKey(true); window.addEventListener("fuelgrid-auth-required", f); return () => window.removeEventListener("fuelgrid-auth-required", f); }, []);
   const h = state?.health;
   return (
     <div className="flex h-full bg-slate-50">
@@ -70,6 +77,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             {state?.ready && (
               <>
                 <span className="tabular hidden text-xs text-slate-500 sm:inline">Tick <b className="text-slate-800">{state.instance.tick}</b> · {simTime(state.instance.sim_time)}</span>
+                <Badge tone="slate">{state.source.label}</Badge>
                 <Badge tone={statusTone(state.instance.status)}>{state.instance.status}</Badge>
                 <Badge tone={h?.status === "healthy" ? "green" : "amber"}><Activity size={11} /> System {h?.status}</Badge>
                 {h?.mode !== "live" && <Badge tone="amber">Degraded · cached state</Badge>}
@@ -100,6 +108,16 @@ export default function Layout({ children }: { children: ReactNode }) {
         </main>
       </div>
 
+      {needKey && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4">
+          <form onSubmit={(e) => { e.preventDefault(); apiKey.set(key); setNeedKey(false); }} className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl">
+            <h3 className="text-sm font-semibold text-slate-900">Operator API key required</h3>
+            <p className="mt-1 text-xs text-slate-500">This server protects write actions. Enter the key to continue; it is kept in this browser only.</p>
+            <input autoFocus type="password" value={key} onChange={(e) => setKey(e.target.value)} className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500" placeholder="API key" />
+            <div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => setNeedKey(false)} className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100">Cancel</button><button className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">Save key</button></div>
+          </form>
+        </div>
+      )}
       <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map((t) => (
           <div key={t.id} className={clsx("pointer-events-auto max-w-sm rounded-lg px-4 py-2.5 text-sm shadow-lg ring-1", t.kind === "ok" ? "bg-white text-slate-800 ring-slate-200" : "bg-rose-50 text-rose-800 ring-rose-200")}>{t.text}</div>

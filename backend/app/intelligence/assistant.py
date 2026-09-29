@@ -51,7 +51,7 @@ def grounded_answer(rt, question: str) -> str:
     q = question.lower()
     snap, eng = rt.store.snapshot, rt.engine
     if snap is None:
-        return "I do not have data from the simulator yet."
+        return "I do not have any data yet."
     plan = eng.plan
     sid, fuel = _find(snap, q)
     m = re.search(r"#?\b(\d{1,5})\b", q)
@@ -104,7 +104,7 @@ def grounded_answer(rt, question: str) -> str:
                 parts.append(f"{label}: {_n(c[k])} L")
         return "Expected unmet demand over the next 8 hours if we choose - " + ", ".join(parts) + "."
     if any(w in q for w in ("health", "system", "degraded", "working", "simulator", "database", "fallback")):
-        bits = [f"Simulator link: {'degraded (using cached data)' if rt.client.breaker.open or snap.stale else 'healthy'}",
+        bits = [f"Data source link: {'degraded (using cached data)' if rt.client.breaker_open or snap.stale else 'healthy'}",
                 f"database: {'up' if rt.repo.up else 'buffering in memory'}",
                 f"policy in use: {plan.policy if plan else 'none yet'}"]
         if rt.cfg.policy_rolled_back:

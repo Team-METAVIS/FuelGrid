@@ -133,6 +133,8 @@ class FaultIn(BaseModel):
 
 
 async def _admin(r, method, path, body=None):
+    if not getattr(r.client, "supports_admin", False):
+        raise HTTPException(409, f"The active data source ({r.client.label}) has no admin console; use its own controls.")
     try:
         return await r.client.admin(method, path, body)
     except httpx.HTTPStatusError as e:

@@ -9,8 +9,8 @@ from httpx_sse import aconnect_sse
 
 from app.core import metrics as m
 from app.core.logging import get_logger
+from app.domain.errors import SimulatorError
 from app.simulator.client import SimulatorClient
-from app.simulator.errors import SimulatorError
 from app.state.store import Snapshot, StateStore
 
 log = get_logger("state.sync")
@@ -48,7 +48,7 @@ class Synchronizer:
             if not self.store.regions:
                 self.store.regions = {r.id: r.demand_factor for r in await c.regions()}
             if self.warm and inst.tick < self.last_tick:  # tick went backwards => simulator was reset
-                log.warning("simulator_reset_detected", from_tick=self.last_tick, to_tick=inst.tick)
+                log.warning("source_reset_detected", from_tick=self.last_tick, to_tick=inst.tick)
                 self.store.clear()
                 self.warm = False
                 if self.bus is not None:
@@ -56,8 +56,10 @@ class Synchronizer:
                 for cb in self.on_reset:
                     cb()
             # one call for all stations: 12 rows/tick; fetch just the gap since the last seen tick
+            prev = self.store.snapshot
+            per_tick = max(1, sum(len(s.capacity) for s in prev.stations.values())) if prev else 12  # rows/tick = stations x fuels
             gap = inst.tick - self.last_tick if self.warm else 10_000
-            limit = min(2000, max(48, 12 * (gap + 2)))
+            limit = min(2000, max(48, per_tick * (gap + 2)))
             self.store.ingest_demand(await c.demand_history(None, limit))
             self.last_tick = inst.tick
             self.warm = True
@@ -127,7 +129,9 @@ class Synchronizer:
             await asyncio.sleep(max(0.0, 0.5 - (time.perf_counter() - t0)))
 
     def start(self):
-        self._tasks = [asyncio.create_task(self._sse_loop()), asyncio.create_task(self._refresh_loop())]
+        self._tasks = [asyncio.create_task(self._refresh_loop())]
+        if getattr(self.client, "supports_stream", False):  # sources that cannot push are simply polled
+            self._tasks.append(asyncio.create_task(self._sse_loop()))
 
     async def stop(self):
         for t in self._tasks:

@@ -34,15 +34,32 @@ export interface State {
   incidents: { key: string; type: string; severity: string; message: string; since_tick: number }[];
   plan: { policy: string; solver_status: string; runtime_ms: number; fallback_used: boolean; fallback_reason: string | null; tick: number; notes: string[]; forecast_model: string; comparison: Record<string, any> } | null;
   settings: Settings;
+  source: { kind: string; label: string; supports_admin: boolean };
 }
 
+const KEY = "fuelgrid_api_key";
+export const apiKey = {
+  get: () => { try { return localStorage.getItem(KEY) ?? ""; } catch { return ""; } },
+  set: (v: string) => { try { v ? localStorage.setItem(KEY, v) : localStorage.removeItem(KEY); } catch { /* storage unavailable */ } },
+};
+const authHeaders = (): Record<string, string> => (apiKey.get() ? { "x-api-key": apiKey.get() } : {});
+
 export async function get<T = any>(url: string): Promise<T> {
-  const r = await fetch(url);
+  const r = await fetch(url, { headers: authHeaders() });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
+
+/** Write actions: sends the operator key; on 401 asks the console to prompt for it. */
 export async function post<T = any>(url: string, body?: unknown): Promise<T> {
-  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-  if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...authHeaders() }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401) {
+    window.dispatchEvent(new Event("fuelgrid-auth-required"));
+    throw new Error("An operator API key is required for this action.");
+  }
+  if (!r.ok) {
+    const text = (await r.text()).slice(0, 400);
+    try { throw new Error(JSON.parse(text).detail ?? text); } catch (e) { throw e instanceof SyntaxError ? new Error(text) : e; }
+  }
   return r.json();
 }

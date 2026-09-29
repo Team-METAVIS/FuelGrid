@@ -23,7 +23,7 @@ def test_state_payload_is_complete(api):
     s = c.get("/api/state").json()
     assert s["ready"] and len(s["stations"]) == 4 and len(s["depots"]) == 2 and len(s["routes"]) == 6
     assert s["recommendations"] and s["plan"]["policy"] == "optimizer" and "none" in s["plan"]["comparison"]
-    assert set(s["health"]["components"]) >= {"database", "simulator", "prediction", "decision_engine"}
+    assert set(s["health"]["components"]) >= {"database", "data_source", "prediction", "decision_engine"}
 
 
 def test_state_before_first_snapshot_is_not_ready():

@@ -27,6 +27,14 @@ export default function Scenarios() {
   useEffect(() => { get("/api/scenarios").then(setLib).catch(() => undefined); }, []);
   if (!s) return null;
   const running = s.instance.status === "RUNNING";
+  if (!s.source.supports_admin) {
+    return (
+      <>
+        <PageHeader title="Scenarios & chaos" description="Crisis and fault injection for the simulator." />
+        <Card title="Not available for this data source"><p className="text-sm text-slate-600">The active source ({s.source.label}) has no admin console. Use the Data sources page to change the demo world while it runs, or switch back to the simulator.</p></Card>
+      </>
+    );
+  }
   return (
     <>
       <PageHeader title="Scenarios & chaos" description="Drive the simulator, replay crisis scenarios, and inject software faults to demonstrate detection, fallback and recovery." />

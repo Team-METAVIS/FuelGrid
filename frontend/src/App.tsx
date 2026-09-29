@@ -3,12 +3,14 @@ import Layout from "./components/Layout";
 import { useLive } from "./lib/live";
 import Assistant from "./pages/Assistant";
 import Audit from "./pages/Audit";
+import Controls from "./pages/Controls";
 import Decisions from "./pages/Decisions";
 import Intelligence from "./pages/Intelligence";
 import Network from "./pages/Network";
 import Overview from "./pages/Overview";
 import Replay from "./pages/Replay";
 import Scenarios from "./pages/Scenarios";
+import Sources from "./pages/Sources";
 import System from "./pages/System";
 
 export default function App() {
@@ -28,6 +30,8 @@ export default function App() {
           <Route path="/scenarios" element={<Scenarios />} />
           <Route path="/assistant" element={<Assistant />} />
           <Route path="/replay" element={<Replay />} />
+          <Route path="/controls" element={<Controls />} />
+          <Route path="/sources" element={<Sources />} />
           <Route path="/system" element={<System />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="*" element={<Overview />} />

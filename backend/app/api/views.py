@@ -5,8 +5,6 @@ import time
 
 import psutil
 
-from app.simulator.models import FUELS
-
 _PROC = psutil.Process()
 _START = time.time()
 VERSION = "0.1.0"
@@ -15,17 +13,17 @@ GIT_SHA = os.environ.get("GIT_SHA", "dev")
 
 def build_health(rt) -> dict:
     snap = rt.store.snapshot
-    sim_ok = rt.client.breaker.open is False and rt.client.last_error is None and snap is not None
+    sim_ok = rt.client.breaker_open is False and rt.client.last_error is None and snap is not None
     age = snap.age_s() if snap else None
     stale = bool(snap and (snap.stale or age > rt.cfg.stale_after_s))
     comps = {
         "database": {"status": "healthy" if rt.repo.up else ("disabled" if not rt.repo.url else "degraded"),
                      "detail": "Supabase Postgres" if rt.repo.up else "buffering writes in memory"},
-        "simulator": {"status": "healthy" if sim_ok and not stale else "degraded",
-                      "detail": rt.client.last_error or ("stale data flag" if stale else "ok"),
-                      "breaker_open": rt.client.breaker.open},
-        "event_stream": {"status": "healthy" if rt.sync.sse_connected else "degraded",
-                         "detail": "SSE connected" if rt.sync.sse_connected else "polling fallback"},
+        "data_source": {"status": "healthy" if sim_ok and not stale else "degraded",
+                      "detail": rt.client.last_error or ("stale data flag" if stale else rt.client.label),
+                      "breaker_open": rt.client.breaker_open, "label": rt.client.label},
+        "event_stream": {"status": "healthy" if (rt.sync.sse_connected or not rt.client.supports_stream) else "degraded",
+                         "detail": "SSE connected" if rt.sync.sse_connected else ("pushed by the feed" if not rt.client.supports_stream else "polling fallback")},
         "prediction": {"status": "degraded" if (rt.engine.plan and rt.engine.plan.notes) else "healthy",
                        "detail": rt.engine.plan.forecast_model if rt.engine.plan else "warming up",
                        "mape": rt.engine.mape()},
@@ -71,18 +69,18 @@ def _build_body(rt, snap) -> dict:
         stations.append({
             "id": s.id, "name": s.name, "region_id": s.region_id, "status": s.status, "profile": s.demand_profile,
             "demand_multiplier": s.demand_multiplier,
-            "fuels": {f.value: {"inventory": s.inventory.get(f.value, 0), "capacity": s.capacity.get(f.value, 0)} for f in FUELS},
+            "fuels": {f: {"inventory": s.inventory.get(f, 0), "capacity": s.capacity.get(f, 0)} for f in snap.fuels},
         })
     depots = [{
         "id": d.id, "name": d.name, "region_id": d.region_id, "status": d.status, "dispatch_capacity": d.dispatch_capacity_per_tick,
-        "fuels": {f.value: {"inventory": d.inventory.get(f.value, 0), "capacity": d.capacity.get(f.value, 0)} for f in FUELS},
+        "fuels": {f: {"inventory": d.inventory.get(f, 0), "capacity": d.capacity.get(f, 0)} for f in snap.fuels},
     } for d in snap.depots.values()]
     incoming = [dataclasses.asdict(a) if dataclasses.is_dataclass(a) else a.model_dump() for a in snap.allocations
                 if a.status in ("PENDING", "IN_TRANSIT")]
     arrivals = [a.model_dump() for a in snap.arrivals if a.status != "ARRIVED"][:12]
     demand = {}
     for s in snap.stations:
-        demand[s] = {f.value: [round(v, 1) for _, v, _ in rt.store.series(s, f.value, 32)] for f in FUELS}
+        demand[s] = {f: [round(v, 1) for _, v, _ in rt.store.series(s, f, 32)] for f in snap.fuels}
     return {
         "ready": True,
         "instance": snap.instance.model_dump(mode="json"),
@@ -98,6 +96,7 @@ def _build_body(rt, snap) -> dict:
                  "fallback_used": plan.fallback_used, "fallback_reason": plan.fallback_reason, "tick": plan.tick,
                  "notes": plan.notes, "forecast_model": plan.forecast_model, "comparison": plan.comparison} if plan else None,
         "settings": settings_view(rt),
+        "source": {"kind": rt.client.kind, "label": rt.client.label, "supports_admin": rt.client.supports_admin},
     }
 
 

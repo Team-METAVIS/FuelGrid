@@ -8,7 +8,7 @@ from app.intelligence.policies import optimizer, rules
 from app.intelligence.policies.common import compute_needs, usable_routes
 from app.intelligence.projection import SEV_ORDER, assess, incoming_by_tick, simulate
 from app.intelligence.types import Forecast, Plan, Recommendation, Risk
-from app.simulator.models import FUELS
+from app.ml.manager import manager
 from app.state.store import Snapshot, StateStore
 
 log = get_logger("planner")
@@ -18,10 +18,29 @@ POLICIES = {"optimizer": optimizer.solve, "rules": rules.solve}
 def forecast_all(store: StateStore, snap: Snapshot, cfg, forecaster: str | None = None) -> tuple[dict, str | None]:
     """Returns forecasts; on forecaster failure falls back to moving average (recorded)."""
     name, reason, out = forecaster or cfg.forecaster, None, {}
+    if name == "learned":
+        try:
+            got = manager.forecast_batch(store, snap, cfg.horizon_ticks, adapt=cfg.online_adaptation)
+        except Exception as e:  # never let the model take the platform down
+            got, reason = None, f"{type(e).__name__}: {e}"
+            log.error("learned_forecaster_failed", error=reason)
+        if got is None:
+            reason = reason or "no trained model available"
+            m.FALLBACK.labels("forecaster", "no_model").inc()
+            name = "moving_avg"
+        else:
+            out = dict(got)
+            cold = 0
+            for s in snap.stations:  # brand-new or sparsely observed series: plain moving average until the model can take over
+                for f in snap.fuels:
+                    if (s, f) not in out:
+                        out[(s, f)] = FORECASTERS["moving_avg"](store, snap, s, f, cfg.horizon_ticks)
+                        cold += 1
+            return out, (f"{cold} series on cold-start fallback" if cold and not got else None)
     for attempt in (name, "moving_avg"):
         try:
             fn = FORECASTERS[attempt]
-            out = {(s, f.value): fn(store, snap, s, f.value, cfg.horizon_ticks) for s in snap.stations for f in FUELS}
+            out = {(s, f): fn(store, snap, s, f, cfg.horizon_ticks) for s in snap.stations for f in snap.fuels}
             if attempt != name:
                 m.FALLBACK.labels("forecaster", reason or "error").inc()
             return out, reason
@@ -101,6 +120,7 @@ def plan(store: StateStore, snap: Snapshot, cfg, policy: str | None = None, fore
     return Plan(snap.tick, policy, recs, sorted(risks.values(), key=lambda r: (-SEV_ORDER[r.severity], -r.stockout_prob)),
                 status, (time.perf_counter() - t0) * 1000, fallback_used, fb_reason, notes,
                 pred1={k: f.per_tick[0] for k, f in forecasts.items()},
+                raw1={k: (f.raw1, f.hi1) for k, f in forecasts.items() if f.raw1 is not None},
                 anomalies=[(f.station_id, f.fuel, f.z, f.level) for f in forecasts.values() if f.anomaly],
                 forecast_model=next(iter(forecasts.values())).model, comparison=comparison, forecasts=forecasts)
 

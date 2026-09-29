@@ -2,8 +2,8 @@ import pytest
 
 from app.db.repo import Repo
 from app.decision.engine import DecisionEngine
-from app.simulator import models as M
-from app.simulator.errors import SimulatorUnavailable
+from app.domain import models as M
+from app.domain.errors import SimulatorUnavailable
 from tests.conftest import make_snapshot
 
 LOW = {"station-mirpur": (300, 9000, 5000)}
@@ -13,13 +13,15 @@ class FakeClient:
     def __init__(self):
         self.calls, self.fail = [], False
         self.breaker = type("B", (), {"open": False})()
+        self.breaker_open = False
+        self.label = "fake source"
 
     async def create_allocation(self, req: M.AllocationRequest):
         if self.fail:
             raise SimulatorUnavailable("down")
         self.calls.append(req)
         return M.Allocation(id=len(self.calls), idempotency_key=req.idempotency_key, source_depot_id=req.source_depot_id,
-                            destination_station_id=req.destination_station_id, route_id=req.route_id, fuel_type=req.fuel_type.value,
+                            destination_station_id=req.destination_station_id, route_id=req.route_id, fuel_type=req.fuel_type,
                             quantity=req.quantity, created_tick=0, status="PENDING")
 
 

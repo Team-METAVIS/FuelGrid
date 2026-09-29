@@ -14,6 +14,10 @@ class Forecast:
     model: str
     anomaly: bool = False
     z: float = 0.0
+    raw1: float | None = None  # the model's own next-step forecast before online correction
+    hi1: float | None = None   # its 90th percentile for the next step (used to spot unexplained surges)
+    lo: list[float] | None = None  # 10th percentile per horizon step
+    hi: list[float] | None = None  # 90th percentile per horizon step
 
 
 @dataclass
@@ -67,6 +71,7 @@ class Plan:
     fallback_used: bool = False
     fallback_reason: str | None = None
     notes: list[str] = field(default_factory=list)
+    raw1: dict = field(default_factory=dict)  # (station, fuel) -> (uncorrected next-step forecast, its p90)
     pred1: dict = field(default_factory=dict)  # (station, fuel) -> next-tick demand forecast
     anomalies: list = field(default_factory=list)  # (station, fuel, z, level)
     forecast_model: str = ""

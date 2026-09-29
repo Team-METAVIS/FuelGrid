@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 
 from app.core.config import Settings
-from app.simulator import models as M
+from app.domain import models as M
 from app.state.store import Snapshot, StateStore
 
 FUEL = ("DIESEL", "PETROL", "OCTANE")
@@ -46,7 +46,7 @@ def make_snapshot(tick=0, station_inv=None, route_status=None, allocations=None,
 
 @pytest.fixture
 def cfg():
-    return Settings(database_url=None)
+    return Settings(database_url=None, forecaster="seasonal")  # the hand-set expert model keeps these planner tests deterministic
 
 
 @pytest.fixture
