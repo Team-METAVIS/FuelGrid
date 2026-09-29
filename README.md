@@ -73,7 +73,7 @@ sequenceDiagram
   participant O as Optimizer
   participant D as Decision engine
   participant U as Operator
-  S->>Y: state, demand, events (REST truth; push = hint)
+  S->>Y: state, demand, events (REST is truth, push is a hint)
   Y->>F: snapshot + demand history
   F->>R: median, p10, p90 per station-fuel (32 steps)
   R->>O: severity, needs (cover target + safety buffer)
